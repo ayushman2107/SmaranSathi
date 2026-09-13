@@ -1009,10 +1009,12 @@ app.post('/api/users', (req: Request, res: Response) => {
   // Check if user already exists by ID
   const existingIdx = id ? users.findIndex(u => u.id === id) : -1;
   if (existingIdx >= 0) {
+    const existingPatientId = users[existingIdx].patient_id;
     users[existingIdx] = {
       ...users[existingIdx],
       ...req.body,
       id,
+      ...(existingPatientId ? { patient_id: existingPatientId } : {}),
       updated_at: new Date().toISOString()
     };
     saveUsersToDisk(users);

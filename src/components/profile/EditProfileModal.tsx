@@ -85,7 +85,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [isFaceScannerOpen, setIsFaceScannerOpen] = useState(false);
   
   // Role-specific fields
-  const [patientId, setPatientId] = useState(user.patient_id || (user.role === 'elderly' ? `PT-${Math.floor(1000 + Math.random() * 9000)}` : ''));
+  const patientId = user.patient_id || (user.role === 'elderly' ? `PT-${Math.floor(1000 + Math.random() * 9000)}` : '');
   const [age, setAge] = useState<number>(user.age || 72);
   const [diagnosisNote, setDiagnosisNote] = useState(user.diagnosis_note || '');
   const [dementiaStage, setDementiaStage] = useState<DementiaStage>(user.dementia_stage || 'mild');
@@ -224,7 +224,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       ...(location.trim() ? { location: location.trim() } : {}),
       ...(diagnosisNote.trim() ? { diagnosis_note: diagnosisNote.trim() } : {}),
       ...(isElderly ? { 
-        patient_id: patientId.trim().toUpperCase() || user.patient_id || `PT-${Math.floor(1000 + Math.random() * 9000)}`,
+        patient_id: user.patient_id || patientId,
         dementia_stage: dementiaStage,
         connected_caregiver_id: connectedCaregiverId.trim() || undefined,
         connected_caregiver_name: connectedCaregiverName.trim() || undefined,
@@ -594,12 +594,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                   </div>
                 </div>
 
-                {/* Patient ID Code */}
+                {/* Patient ID Code (Locked - Read-Only) */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                      Patient ID Code
+                      <Lock className="w-3.5 h-3.5 text-amber-700" />
+                      Patient ID Code (Locked)
                     </label>
                     <button
                       type="button"
@@ -614,15 +614,19 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                       Copy ID
                     </button>
                   </div>
-                  <input
-                    type="text"
-                    value={patientId}
-                    onChange={(e) => setPatientId(e.target.value.toUpperCase())}
-                    placeholder="e.g. PT-1001"
-                    className="w-full font-mono uppercase px-3 py-2.5 rounded-xl border-2 border-amber-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none text-sm font-black bg-white text-gray-900"
-                  />
+                  <div className="relative">
+                    <input
+                      id="patient-id-input"
+                      type="text"
+                      readOnly
+                      value={patientId}
+                      placeholder="e.g. PT-1001"
+                      className="w-full font-mono uppercase pl-3 pr-9 py-2.5 rounded-xl border-2 border-stone-200 bg-stone-100 text-stone-700 outline-none text-sm font-black cursor-not-allowed select-all"
+                    />
+                    <Lock className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                   <p className="text-[10px] text-gray-500 font-semibold">
-                    Unique identifier for caregivers to link and assist with care routines.
+                    Permanent identifier locked for medical record consistency and caregiver synchronization.
                   </p>
                 </div>
 
