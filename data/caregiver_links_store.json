@@ -10,11 +10,5 @@
     "caregiver_id": "caregiver_B",
     "elderly_id": "patient_B",
     "relation": "Primary Care"
-  },
-  {
-    "id": "link-caregiver-1789398049316-user-1789398075183",
-    "caregiver_id": "caregiver-1789398049316",
-    "elderly_id": "user-1789398075183",
-    "relation": "Primary Care"
   }
 ]

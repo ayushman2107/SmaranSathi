@@ -519,7 +519,25 @@ export async function getAssignedElderlyIdsForCaregiver(
     const cleanId = caregiverId.trim().toUpperCase();
     const cleanCode = (caregiverCode || '').trim().toUpperCase();
 
-    // 1. Check caregiver_links collection
+    // 1. Fetch all elderly users in Firestore to cross-reference connected_caregiver_id
+    const elderlyUsers: User[] = [];
+    try {
+      const usersSnap = await getDocs(
+        query(collection(db, USERS_COLLECTION), where('role', '==', 'elderly'))
+      );
+      usersSnap.docs.forEach((docSnap) => {
+        const u = docSnap.data() as User;
+        elderlyUsers.push(u);
+        const conn = (u.connected_caregiver_id || '').trim().toUpperCase();
+        if (conn && (conn === cleanId || (cleanCode && conn === cleanCode))) {
+          patientIds.add(u.id);
+        }
+      });
+    } catch (e) {
+      console.warn('Error querying users for assigned caregiver:', e);
+    }
+
+    // 2. Check caregiver_links collection ONLY for users who do not have a conflicting assignment
     try {
       const snap1 = await getDocs(collection(db, LINKS_COLLECTION));
       snap1.docs.forEach((docSnap) => {
@@ -528,28 +546,20 @@ export async function getAssignedElderlyIdsForCaregiver(
         const ccode = (data.caregiver_code || '').toUpperCase();
         if ((cid && (cid === cleanId || cid === cleanCode)) || (ccode && (ccode === cleanCode || ccode === cleanId))) {
           if (data.elderly_id) {
+            // Ensure elderly is not assigned to someone else
+            const match = elderlyUsers.find(u => u.id === data.elderly_id);
+            if (match && match.connected_caregiver_id) {
+              const conn = match.connected_caregiver_id.trim().toUpperCase();
+              if (conn !== cleanId && (!cleanCode || conn !== cleanCode)) {
+                return; // Assigned to another caregiver, ignore stale link
+              }
+            }
             patientIds.add(data.elderly_id);
           }
         }
       });
     } catch (e) {
       console.warn('Error reading caregiver_links:', e);
-    }
-
-    // 2. Check users collection where connected_caregiver_id matches
-    try {
-      const usersSnap = await getDocs(
-        query(collection(db, USERS_COLLECTION), where('role', '==', 'elderly'))
-      );
-      usersSnap.docs.forEach((docSnap) => {
-        const u = docSnap.data() as User;
-        const conn = (u.connected_caregiver_id || '').trim().toUpperCase();
-        if (conn && (conn === cleanId || (cleanCode && conn === cleanCode))) {
-          patientIds.add(u.id);
-        }
-      });
-    } catch (e) {
-      console.warn('Error querying users for assigned caregiver:', e);
     }
 
     return Array.from(patientIds);
@@ -610,54 +620,133 @@ export async function deleteReminderFromFirebase(reminderId: string): Promise<vo
 // 3. Memory Journals (Relationship-Specific to Assigned Patient-Caregiver Pair)
 // =========================================================================
 
+export const LOCAL_JOURNALS_KEY = 'smritisaathi_cached_memory_journals_v2';
+
+export function persistJournalLocally(journal: MemoryJournalEntry): void {
+  try {
+    if (typeof window === 'undefined' || !journal || !journal.id) return;
+    const existing = getLocallySavedJournals();
+    const filtered = existing.filter((j) => j.id !== journal.id);
+    const updated = [journal, ...filtered].slice(0, 150);
+    localStorage.setItem(LOCAL_JOURNALS_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('Could not persist memory journal to local cache:', e);
+  }
+}
+
+export function deleteJournalLocally(journalId: string): void {
+  try {
+    if (typeof window === 'undefined' || !journalId) return;
+    const existing = getLocallySavedJournals();
+    const filtered = existing.filter((j) => j.id !== journalId);
+    localStorage.setItem(LOCAL_JOURNALS_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('Could not delete memory journal from local cache:', e);
+  }
+}
+
+export function getLocallySavedJournals(filterId?: string): MemoryJournalEntry[] {
+  try {
+    if (typeof window === 'undefined') return [];
+    const raw = localStorage.getItem(LOCAL_JOURNALS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as MemoryJournalEntry[];
+    if (!Array.isArray(parsed)) return [];
+    if (!filterId) return parsed;
+    const clean = filterId.trim().toLowerCase();
+    return parsed.filter((j) => {
+      if (!j) return false;
+      const jRel = (j.relationship_id || '').toLowerCase();
+      const jPat = (j.patient_id || j.user_id || '').toLowerCase();
+      const jCg = (j.caregiver_id || '').toLowerCase();
+      const jCreator = (j.created_by || '').toLowerCase();
+      return (
+        jRel === clean ||
+        jPat === clean ||
+        jCg === clean ||
+        jCreator === clean ||
+        (clean.length > 3 && jRel.includes(clean)) ||
+        (clean.length > 3 && clean.includes(jPat))
+      );
+    });
+  } catch (e) {
+    console.warn('Could not read local memory journals:', e);
+    return [];
+  }
+}
+
 export async function getJournalsForRelationship(
   relationshipId: string
 ): Promise<MemoryJournalEntry[]> {
+  const localList = getLocallySavedJournals(relationshipId);
   try {
-    if (!relationshipId) return [];
+    if (!relationshipId) return localList;
     const q = query(
       collection(db, JOURNALS_COLLECTION),
       where('relationship_id', '==', relationshipId)
     );
     const snap = await getDocs(q);
-    return snap.docs
-      .map((d) => d.data() as MemoryJournalEntry)
+    const remoteList = snap.docs.map((d) => d.data() as MemoryJournalEntry);
+    
+    // Merge remote and local without duplicates
+    const merged = new Map<string, MemoryJournalEntry>();
+    remoteList.forEach((j) => {
+      persistJournalLocally(j);
+      merged.set(j.id, j);
+    });
+    localList.forEach((j) => {
+      if (!merged.has(j.id)) merged.set(j.id, j);
+    });
+
+    return Array.from(merged.values())
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   } catch (error) {
     console.warn('Error getting journals for relationship from Firebase:', error);
-    return [];
+    return localList;
   }
 }
 
 export async function getJournalsForUser(userId: string): Promise<MemoryJournalEntry[]> {
-  // Maintained for backward compatibility, queries relationship or user
+  const localList = getLocallySavedJournals(userId);
   try {
     const q = query(
       collection(db, JOURNALS_COLLECTION),
       where('patient_id', '==', userId)
     );
     const snap = await getDocs(q);
-    if (!snap.empty) {
-      return snap.docs
-        .map((d) => d.data() as MemoryJournalEntry)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    let remoteDocs = snap.docs;
+
+    if (remoteDocs.length === 0) {
+      // Fallback for legacy items without patient_id
+      const legacyQ = query(
+        collection(db, JOURNALS_COLLECTION),
+        where('user_id', '==', userId)
+      );
+      const legacySnap = await getDocs(legacyQ);
+      remoteDocs = legacySnap.docs;
     }
-    // Fallback for legacy items without patient_id
-    const legacyQ = query(
-      collection(db, JOURNALS_COLLECTION),
-      where('user_id', '==', userId)
-    );
-    const legacySnap = await getDocs(legacyQ);
-    return legacySnap.docs
-      .map((d) => d.data() as MemoryJournalEntry)
+
+    const remoteList = remoteDocs.map((d) => d.data() as MemoryJournalEntry);
+    const merged = new Map<string, MemoryJournalEntry>();
+    remoteList.forEach((j) => {
+      persistJournalLocally(j);
+      merged.set(j.id, j);
+    });
+    localList.forEach((j) => {
+      if (!merged.has(j.id)) merged.set(j.id, j);
+    });
+
+    return Array.from(merged.values())
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   } catch (error) {
     console.warn('Error getting journals from Firebase:', error);
-    return [];
+    return localList;
   }
 }
 
 export async function saveJournalToFirebase(journal: MemoryJournalEntry): Promise<void> {
+  // Always persist locally first so nothing is lost even offline
+  persistJournalLocally(journal);
   try {
     const ref = doc(db, JOURNALS_COLLECTION, journal.id);
     await setDoc(ref, cleanForFirestore(journal), { merge: true });
@@ -667,6 +756,7 @@ export async function saveJournalToFirebase(journal: MemoryJournalEntry): Promis
 }
 
 export async function deleteJournalFromFirebase(journalId: string): Promise<void> {
+  deleteJournalLocally(journalId);
   try {
     const ref = doc(db, JOURNALS_COLLECTION, journalId);
     await deleteDoc(ref);

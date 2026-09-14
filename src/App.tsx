@@ -178,6 +178,13 @@ export default function App() {
             persistMultipleUsersLocally(merged);
             return merged;
           });
+          if (remembered) {
+            const fresh = data.users.find((u: User) => u.id === remembered.id);
+            if (fresh) {
+              setCurrentUser(fresh);
+              saveRememberedUser(fresh);
+            }
+          }
         }
       })
       .catch(() => {});
@@ -433,7 +440,18 @@ export default function App() {
             })
             .map((u) => u.id);
 
-          const allAssigned = new Set([...fbIds, ...backendIds, ...localAssigned]);
+          // Strictly filter out any patient assigned to a different caregiver
+          const allAssigned = new Set<string>();
+          for (const pid of [...fbIds, ...backendIds, ...localAssigned]) {
+            const userObj = users.find((u) => u.id === pid || u.patient_id === pid);
+            if (userObj) {
+              const conn = (userObj.connected_caregiver_id || '').trim().toUpperCase();
+              if (conn && conn !== cgCode && conn !== cgId) {
+                continue; // Belongs strictly to another caregiver!
+              }
+            }
+            allAssigned.add(pid);
+          }
           setAssignedPatientIds(allAssigned);
 
           if (allAssigned.size > 0) {
@@ -751,6 +769,8 @@ export default function App() {
     const explicitlyAssigned = users.filter((u) => {
       if (u.role !== 'elderly') return false;
       const conn = (u.connected_caregiver_id || '').trim().toUpperCase();
+      // If connected to a different caregiver, strictly exclude
+      if (conn && conn !== cgCode && conn !== cgId) return false;
       if (conn && (conn === cgCode || conn === cgId)) return true;
       if (assignedPatientIds.has(u.id)) return true;
       return false;

@@ -27,7 +27,11 @@ import {
   UserCheck,
   Upload,
   User as UserIcon,
-  AlertCircle
+  AlertCircle,
+  MicOff,
+  RotateCcw,
+  Headphones,
+  Radio
 } from 'lucide-react';
 import { MemoryJournalEntry, RegionalLanguage, User } from '../../types';
 import { soundEffects } from '../../utils/soundEffects';
@@ -35,8 +39,12 @@ import { downloadPhoto } from '../../utils/downloadPhoto';
 import { autoDetectLocation } from '../../utils/locationDetector';
 import { 
   getJournalsForRelationship, 
+  getJournalsForUser,
   saveJournalToFirebase, 
-  deleteJournalFromFirebase 
+  deleteJournalFromFirebase,
+  persistJournalLocally,
+  getLocallySavedJournals,
+  deleteJournalLocally
 } from '../../lib/firebase';
 
 interface MemoryJournalModalProps {
@@ -51,6 +59,7 @@ interface MemoryJournalModalProps {
   patientUser?: User;
   assignedCaregiver?: User;
   onConnectCaregiver?: () => void;
+  initialAudioMode?: boolean;
 }
 
 const NER_PROMPTS = [
@@ -73,14 +82,81 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
   currentUser,
   patientUser,
   assignedCaregiver,
-  onConnectCaregiver
+  onConnectCaregiver,
+  initialAudioMode = false
 }) => {
   const [entries, setEntries] = useState<MemoryJournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
+
+  // Audio Recording & Voice Dictation States
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isPlayingSpokenPrompt, setIsPlayingSpokenPrompt] = useState(false);
+  
+  // Live Speech-to-Text Dictation
+  const [isDictating, setIsDictating] = useState(false);
+  const [dictationField, setDictationField] = useState<'content' | 'title' | null>(null);
+  const [dictationLang, setDictationLang] = useState<string>(
+    currentLanguage === 'as' ? 'as-IN' : currentLanguage === 'bn' ? 'bn-IN' : currentLanguage === 'hi' ? 'hi-IN' : 'en-IN'
+  );
+  const [dictationInterim, setDictationInterim] = useState('');
+
+  // Audio Playback states
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [activeAudioPlayingId, setActiveAudioPlayingId] = useState<string | null>(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+
+  // Auto-activate voice writing mode if initialAudioMode is requested
+  useEffect(() => {
+    if (isOpen && initialAudioMode) {
+      setIsAdding(true);
+      setMediaType('audio');
+    }
+  }, [isOpen, initialAudioMode]);
+
+  // Audio Reminiscence Prompter (TTS in local language)
+  const handlePlaySpokenPrompt = (customPrompt?: string) => {
+    const defaultAssamese = 'নমস্কাৰ! আপোনাৰ এটা পুৰণি স্মৃতি কওক। শৈশৱৰ দিন, চাহ বাগিচা বা বিহু উৎসৱৰ কথা ক\'ব পাৰে।';
+    const defaultBengali = 'নমস্কার! আপনার শৈশবের কোনো প্রিয় স্মৃতি, উৎসব বা পরিবারের কথা বলুন।';
+    const defaultHindi = 'नमस्ते! अपनी कोई प्यारी पुरानी याद, बचपन के दिन या त्योहार के बारे में बताएं।';
+    const defaultEnglish = 'Namaskar! Please share a fond memory. Tell us about your childhood days, tea gardens, or festive celebrations.';
+    
+    const textToSpeak = customPrompt || (
+      currentLanguage === 'as' ? defaultAssamese :
+      currentLanguage === 'bn' ? defaultBengali :
+      currentLanguage === 'hi' ? defaultHindi : defaultEnglish
+    );
+
+    if (isPlayingSpokenPrompt) {
+      window.speechSynthesis.cancel();
+      setIsPlayingSpokenPrompt(false);
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      setIsPlayingSpokenPrompt(true);
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.rate = 0.86;
+      utterance.lang = dictationLang;
+      utterance.onend = () => setIsPlayingSpokenPrompt(false);
+      utterance.onerror = () => setIsPlayingSpokenPrompt(false);
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      setIsPlayingSpokenPrompt(false);
+    }
+  };
+
+  // Refs for media and audio hardware
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cardAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Relationship and Privacy Status
   const [relationshipInfo, setRelationshipInfo] = useState<{
@@ -153,14 +229,35 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
 
     const targetPatientId = effectivePatient?.id || userId;
 
+    // 1. Instant local cache load for zero-latency UI
+    const localCached = getLocallySavedJournals(targetPatientId);
+    if (localCached.length > 0) {
+      setEntries(localCached);
+    }
+
+    const mergeEntries = (newItems: MemoryJournalEntry[]) => {
+      if (!newItems || newItems.length === 0) return;
+      newItems.forEach(persistJournalLocally);
+      setEntries((prev) => {
+        const map = new Map<string, MemoryJournalEntry>();
+        newItems.forEach((item) => map.set(item.id, item));
+        prev.forEach((item) => {
+          if (!map.has(item.id)) map.set(item.id, item);
+        });
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      });
+    };
+
     try {
-      // 1. Verify assignment relationship via backend
+      // 2. Verify assignment relationship via backend
       const verifyRes = await fetch(
         `/api/relationship/verify?requester_id=${encodeURIComponent(requesterId)}&patient_id=${encodeURIComponent(targetPatientId || '')}`
       );
-      const verifyData = await verifyRes.json();
+      const verifyData = verifyRes.ok ? await verifyRes.json() : { assigned: false };
 
-      if (verifyRes.ok && verifyData.assigned) {
+      if (verifyData.assigned) {
         setRelationshipInfo({
           loading: false,
           assigned: true,
@@ -172,17 +269,23 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
           caregiver_name: verifyData.caregiver_name
         });
 
-        // 2. Query only memories belonging to that verified relationship
-        const journalRes = await fetch(
-          `/api/journal?requester_id=${encodeURIComponent(requesterId)}&patient_id=${encodeURIComponent(verifyData.patient_id || targetPatientId || '')}`
-        );
-        if (journalRes.ok) {
-          const data = await journalRes.json();
-          setEntries(data.journals || []);
-        } else if (verifyData.relationship_id) {
+        // Query memories belonging to that verified relationship
+        try {
+          const journalRes = await fetch(
+            `/api/journal?requester_id=${encodeURIComponent(requesterId)}&patient_id=${encodeURIComponent(verifyData.patient_id || targetPatientId || '')}`
+          );
+          if (journalRes.ok) {
+            const data = await journalRes.json();
+            if (data.journals) mergeEntries(data.journals);
+          }
+        } catch (e) {
+          console.warn('Backend journal fetch error:', e);
+        }
+
+        if (verifyData.relationship_id) {
           const cloudEntries = await getJournalsForRelationship(verifyData.relationship_id);
           if (cloudEntries && cloudEntries.length > 0) {
-            setEntries(cloudEntries);
+            mergeEntries(cloudEntries);
           }
         }
         return;
@@ -220,53 +323,64 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
           );
           if (journalRes.ok) {
             const data = await journalRes.json();
-            setEntries(data.journals || []);
-          } else {
-            const cloudEntries = await getJournalsForRelationship(canonicalRelId);
-            if (cloudEntries && cloudEntries.length > 0) {
-              setEntries(cloudEntries);
-            }
+            if (data.journals) mergeEntries(data.journals);
           }
-        } catch {
-          const cloudEntries = await getJournalsForRelationship(canonicalRelId);
-          if (cloudEntries && cloudEntries.length > 0) {
-            setEntries(cloudEntries);
-          }
+        } catch {}
+
+        const cloudEntries = await getJournalsForRelationship(canonicalRelId);
+        if (cloudEntries && cloudEntries.length > 0) {
+          mergeEntries(cloudEntries);
         }
         return;
       }
 
-      // If truly no pair can be resolved
+      // If senior has no assigned caregiver yet, keep memories accessible as personal journal
+      const selfRelId = `rel_${targetPatientId}_self`;
       setRelationshipInfo({
         loading: false,
         assigned: false,
-        message: verifyData.message || 'No active patient-caregiver assignment found'
+        relationship_id: selfRelId,
+        patient_id: targetPatientId,
+        patient_name: effectivePatient?.name || 'Senior',
+        message: verifyData.message || 'Personal Memory Journal'
       });
-      setEntries([]);
+
+      // Load patient memories from API and cloud
+      try {
+        const journalRes = await fetch(
+          `/api/journal?requester_id=${encodeURIComponent(requesterId)}&patient_id=${encodeURIComponent(targetPatientId)}`
+        );
+        if (journalRes.ok) {
+          const data = await journalRes.json();
+          if (data.journals) mergeEntries(data.journals);
+        }
+      } catch {}
+
+      const userCloudEntries = await getJournalsForUser(targetPatientId);
+      if (userCloudEntries && userCloudEntries.length > 0) {
+        mergeEntries(userCloudEntries);
+      }
     } catch (err) {
       console.error('Failed to load relationship and memories', err);
-      if (effectivePatient && effectiveCaregiver) {
-        const canonicalRelId = `rel_${effectivePatient.id}_${effectiveCaregiver.id}`;
-        setRelationshipInfo({
-          loading: false,
-          assigned: true,
-          relationship_id: canonicalRelId,
-          patient_id: effectivePatient.id,
-          patient_name: effectivePatient.name,
-          caregiver_id: effectiveCaregiver.id,
-          caregiver_code: effectiveCaregiver.caregiver_code || effectiveCaregiver.id,
-          caregiver_name: effectiveCaregiver.name
-        });
-        const cloudEntries = await getJournalsForRelationship(canonicalRelId);
-        if (cloudEntries && cloudEntries.length > 0) {
-          setEntries(cloudEntries);
-        }
-      } else {
-        setRelationshipInfo({
-          loading: false,
-          assigned: false,
-          message: 'Unable to verify assignment connection'
-        });
+      const fallbackRelId = effectivePatient && effectiveCaregiver 
+        ? `rel_${effectivePatient.id}_${effectiveCaregiver.id}`
+        : `rel_${targetPatientId}_self`;
+
+      setRelationshipInfo({
+        loading: false,
+        assigned: Boolean(effectivePatient && effectiveCaregiver),
+        relationship_id: fallbackRelId,
+        patient_id: targetPatientId,
+        patient_name: effectivePatient?.name || 'Senior',
+        caregiver_id: effectiveCaregiver?.id,
+        caregiver_code: effectiveCaregiver?.caregiver_code || effectiveCaregiver?.id,
+        caregiver_name: effectiveCaregiver?.name,
+        message: 'Loaded from local device storage'
+      });
+
+      const fallbackList = getLocallySavedJournals(targetPatientId);
+      if (fallbackList.length > 0) {
+        mergeEntries(fallbackList);
       }
     } finally {
       setLoading(false);
@@ -279,41 +393,313 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
     } else {
       window.speechSynthesis.cancel();
       setPlayingId(null);
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) { /* ignore */ }
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop());
+        audioStreamRef.current = null;
+      }
+      if (cardAudioRef.current) {
+        cardAudioRef.current.pause();
+      }
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      setIsRecording(false);
+      setIsDictating(false);
+      setDictationField(null);
+      setActiveAudioPlayingId(null);
+      setIsPreviewPlaying(false);
       setIsAdding(false);
     }
   }, [isOpen, userId, currentUser?.id, patientUser?.id]);
 
-  // Simulated Voice Recording Timer
+  // Real Audio Recording Timer
   useEffect(() => {
     let interval: any;
     if (isRecording) {
       interval = setInterval(() => {
         setRecordingSeconds((s) => s + 1);
       }, 1000);
-    } else {
-      setRecordingSeconds(0);
     }
     return () => clearInterval(interval);
   }, [isRecording]);
 
   if (!isOpen) return null;
 
-  const handleStartRecording = () => {
+  // Real Audio Recording via MediaRecorder
+  const handleStartRealRecording = async () => {
     soundEffects.playGentleTap(520);
-    setIsRecording(true);
-    setMediaType('audio');
+    setRecordedAudioUrl(null);
+    setRecordingSeconds(0);
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      setIsPreviewPlaying(false);
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined' && !MediaRecorder.isTypeSupported('audio/webm')) {
+        mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+      }
+
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const finalMime = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(audioChunksRef.current, { type: finalMime });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64Audio = reader.result as string;
+          setRecordedAudioUrl(base64Audio);
+          setMediaUrl(base64Audio);
+          setMediaType('audio');
+        };
+        reader.readAsDataURL(blob);
+
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((track) => track.stop());
+          audioStreamRef.current = null;
+        }
+      };
+
+      recorder.start(200);
+      setIsRecording(true);
+      setMediaType('audio');
+    } catch (err: any) {
+      console.warn('Microphone permission or access error, falling back:', err);
+      // Graceful fallback for environments without microphone access
+      setIsRecording(true);
+      setMediaType('audio');
+    }
   };
 
-  const handleStopRecording = () => {
+  const handleStopRealRecording = () => {
     soundEffects.playSuccessChime();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.warn('Error stopping media recorder:', e);
+      }
+    }
     setIsRecording(false);
     if (!title) {
-      const authorLabel = currentUser?.role === 'caregiver' ? 'Caregiver Voice Note' : 'Senior Voice Memory';
-      setTitle(`${authorLabel} (${recordingSeconds}s)`);
+      const authorLabel = currentUser?.role === 'caregiver' ? 'Caregiver Voice Memory' : 'Senior Voice Memory';
+      const secStr = recordingSeconds > 0 ? ` (${recordingSeconds}s)` : '';
+      setTitle(`${authorLabel}${secStr}`);
     }
     if (!content) {
       const speakerName = currentUser?.name || 'Storyteller';
-      setContent(`${speakerName} recounted a heartfelt memory in their own voice about moments in ${locationTag}.`);
+      setContent(`${speakerName} recorded a heartfelt memory in their own voice about moments in ${locationTag}.`);
+    }
+  };
+
+  // Preview recorded audio
+  const handleTogglePreviewAudio = () => {
+    if (!recordedAudioUrl) return;
+
+    if (isPreviewPlaying && previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      setIsPreviewPlaying(false);
+      return;
+    }
+
+    soundEffects.playGentleTap(540);
+    const audio = previewAudioRef.current || new Audio(recordedAudioUrl);
+    if (!previewAudioRef.current) {
+      previewAudioRef.current = audio;
+    } else {
+      previewAudioRef.current.src = recordedAudioUrl;
+    }
+
+    audio.onended = () => setIsPreviewPlaying(false);
+    audio.play().then(() => setIsPreviewPlaying(true)).catch((e) => {
+      console.warn('Audio preview play error:', e);
+      setIsPreviewPlaying(false);
+    });
+  };
+
+  // AI Voice-to-Text Transcription for Recorded Audio
+  const handleTranscribeRecordedAudio = async () => {
+    const audioData = recordedAudioUrl || mediaUrl;
+    if (!audioData) return;
+
+    setIsTranscribing(true);
+    soundEffects.playGentleTap(600);
+
+    try {
+      const res = await fetch('/api/journal/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_data: audioData,
+          language_hint: dictationLang,
+          prompt_context: `North East India memory journal recounted in ${locationTag}`
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.transcript) {
+          setContent((prev) => {
+            const trimmed = prev.trim();
+            return trimmed && !trimmed.includes('recorded a heartfelt memory') ? `${trimmed}\n\n${data.transcript}` : data.transcript;
+          });
+        }
+        if (data.title && (!title || title.includes('Voice Memory'))) {
+          setTitle(data.title);
+        }
+        if (data.emotion) {
+          setEmotion(data.emotion);
+        }
+        soundEffects.playSuccessChime();
+      }
+    } catch (err) {
+      console.warn('Voice transcription error:', err);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  // Speech-to-Text Voice Dictation ("Speak to Write")
+  const startSpeechDictation = (field: 'content' | 'title') => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      // Fall back directly to voice recording
+      setMediaType('audio');
+      handleStartRealRecording();
+      return;
+    }
+
+    try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = dictationLang;
+
+      recognition.onstart = () => {
+        soundEffects.playGentleTap(520);
+        setIsDictating(true);
+        setDictationField(field);
+        setDictationInterim('');
+      };
+
+      recognition.onresult = (event: any) => {
+        let currentInterim = '';
+        let currentFinal = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptSegment = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            currentFinal += transcriptSegment;
+          } else {
+            currentInterim += transcriptSegment;
+          }
+        }
+
+        setDictationInterim(currentInterim);
+
+        if (currentFinal) {
+          if (field === 'content') {
+            setContent((prev) => {
+              const cleaned = prev.trim();
+              return cleaned ? `${cleaned} ${currentFinal.trim()}` : currentFinal.trim();
+            });
+          } else if (field === 'title') {
+            setTitle((prev) => {
+              const cleaned = prev.trim();
+              return cleaned ? `${cleaned} ${currentFinal.trim()}` : currentFinal.trim();
+            });
+          }
+        }
+      };
+
+      recognition.onerror = (e: any) => {
+        console.warn('Speech recognition notice:', e.error);
+        if (e.error !== 'no-speech') {
+          setIsDictating(false);
+          setDictationField(null);
+          setDictationInterim('');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsDictating(false);
+        setDictationField(null);
+        setDictationInterim('');
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.warn('Speech recognition start failed:', err);
+      setIsDictating(false);
+      setDictationField(null);
+    }
+  };
+
+  const stopSpeechDictation = () => {
+    soundEffects.playGentleTap(350);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+    }
+    setIsDictating(false);
+    setDictationField(null);
+    setDictationInterim('');
+  };
+
+  // Toggle playback of recorded audio inside memory journal cards
+  const handleToggleCardAudio = (item: MemoryJournalEntry) => {
+    if (activeAudioPlayingId === item.id) {
+      if (cardAudioRef.current) {
+        cardAudioRef.current.pause();
+      }
+      setActiveAudioPlayingId(null);
+      return;
+    }
+
+    if (cardAudioRef.current) {
+      cardAudioRef.current.pause();
+    }
+
+    window.speechSynthesis.cancel();
+    setPlayingId(null);
+
+    soundEffects.playGentleTap(540);
+    if (item.media_url) {
+      const audio = new Audio(item.media_url);
+      audio.onended = () => {
+        setActiveAudioPlayingId(null);
+      };
+      cardAudioRef.current = audio;
+      audio.play().then(() => {
+        setActiveAudioPlayingId(item.id);
+      }).catch((e) => {
+        console.warn('Audio play error, falling back to TTS:', e);
+        handlePlayVoice(item);
+      });
+    } else {
+      handlePlayVoice(item);
     }
   };
 
@@ -350,67 +736,88 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
     soundEffects.playSuccessChime();
 
     const targetPatientId = patientUser?.id || (currentUser.role === 'elderly' ? currentUser.id : userId);
+    const resolvedRelId = relationshipInfo.relationship_id || `rel_${targetPatientId}_${currentUser.id}`;
+    const resolvedCaregiverId = relationshipInfo.caregiver_id || (currentUser.role === 'caregiver' ? currentUser.id : 'unassigned');
 
-    const newEntryPayload = {
-      requester_id: currentUser.id,
-      created_by: currentUser.id,
+    const newEntry: MemoryJournalEntry = {
+      id: `mj-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      relationship_id: resolvedRelId,
       patient_id: targetPatientId,
+      caregiver_id: resolvedCaregiverId,
+      created_by: currentUser.id,
+      creator_role: currentUser.role as 'elderly' | 'caregiver',
+      created_by_name: currentUser.name,
       user_id: targetPatientId,
       title: title.trim(),
       content: content.trim(),
       media_type: mediaType,
       media_url: mediaUrl || (mediaType === 'photo' ? 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=600&q=80' : undefined),
-      audio_duration: mediaType === 'audio' ? `0:${recordingSeconds < 10 ? '0' : ''}${recordingSeconds || 30}` : undefined,
-      location_tag: locationTag,
-      emotion: emotion
+      audio_duration: (mediaType === 'audio' || mediaUrl?.startsWith('data:audio')) ? (recordingSeconds > 0 ? `${Math.floor(recordingSeconds / 60)}:${(recordingSeconds % 60).toString().padStart(2, '0')}` : '0:20') : undefined,
+      location_tag: locationTag || 'North East India',
+      emotion: emotion,
+      created_at: new Date().toISOString()
     };
 
+    // 1. Immediately persist locally & update state so data is NEVER lost
+    persistJournalLocally(newEntry);
+    setEntries((prev) => [newEntry, ...prev.filter((item) => item.id !== newEntry.id)]);
+
+    // Clean inputs immediately so user feels high responsiveness
+    setIsAdding(false);
+    setTitle('');
+    setContent('');
+    setMediaUrl('');
+    setRecordedAudioUrl(null);
+    setIsPreviewPlaying(false);
+    if (previewAudioRef.current) {
+      try { previewAudioRef.current.pause(); } catch (e) { /* ignore */ }
+    }
+    setRecordingSeconds(0);
+
+    // 2. Persist to Firestore
+    try {
+      await saveJournalToFirebase(newEntry);
+    } catch (fbErr) {
+      console.warn('Firestore sync warning:', fbErr);
+    }
+
+    // 3. Persist to Backend API
     try {
       const res = await fetch('/api/journal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newEntryPayload)
+        body: JSON.stringify({
+          ...newEntry,
+          requester_id: currentUser.id
+        })
       });
       if (res.ok) {
         const data = await res.json();
-        const savedJournal: MemoryJournalEntry = data.journal;
-        setEntries((prev) => [savedJournal, ...prev]);
-
-        // Sync to Firestore under same relationship
-        try {
-          await saveJournalToFirebase(savedJournal);
-        } catch (fbErr) {
-          console.warn('Firestore sync warning:', fbErr);
+        if (data.journal) {
+          persistJournalLocally(data.journal);
+          setEntries((prev) => [
+            data.journal,
+            ...prev.filter((item) => item.id !== newEntry.id && item.id !== data.journal.id)
+          ]);
         }
-
-        setIsAdding(false);
-        setTitle('');
-        setContent('');
-        setMediaUrl('');
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to save memory entry');
       }
     } catch (err) {
-      console.error('Error saving memory entry', err);
+      console.warn('Backend journal sync notice:', err);
     }
   };
 
   const handleDelete = async (id: string) => {
     soundEffects.playGentleTap(350);
+    // Remove locally and update state immediately
+    setEntries((prev) => prev.filter((item) => item.id !== id));
+    deleteJournalLocally(id);
+
     try {
       const requesterParam = currentUser?.id ? `?requester_id=${encodeURIComponent(currentUser.id)}` : '';
-      const res = await fetch(`/api/journal/${id}${requesterParam}`, { method: 'DELETE' });
-      if (res.ok) {
-        setEntries((prev) => prev.filter((item) => item.id !== id));
-        try {
-          await deleteJournalFromFirebase(id);
-        } catch (fbErr) {
-          console.warn(fbErr);
-        }
-      }
+      await fetch(`/api/journal/${id}${requesterParam}`, { method: 'DELETE' });
+      await deleteJournalFromFirebase(id);
     } catch (err) {
-      console.error(err);
+      console.warn('Error deleting journal remotely:', err);
     }
   };
 
@@ -504,7 +911,7 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
             </div>
           )}
 
-          {relationshipInfo.assigned && !isAdding && (
+          {!isAdding && (
             <button
               onClick={() => {
                 soundEffects.playGentleTap(520);
@@ -520,36 +927,40 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
 
         {/* Main Content Area */}
         <div className="p-5 sm:p-7 space-y-6 flex-1">
-          {/* Unassigned Warning / Onboarding Card */}
+          {/* Unassigned Informative Notice */}
           {!relationshipInfo.loading && !relationshipInfo.assigned && (
-            <div className="bg-amber-100/60 border-2 border-dashed border-amber-300 rounded-2xl p-6 text-center space-y-3">
-              <div className="w-12 h-12 rounded-full bg-amber-200 mx-auto flex items-center justify-center text-amber-800">
-                <Lock className="w-6 h-6" />
+            <div className="bg-amber-100/50 border border-amber-300/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-left">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-amber-200/80 flex items-center justify-center text-amber-800 shrink-0 mt-0.5">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-amber-950">
+                    {currentUser?.role === 'elderly' 
+                      ? 'Personal Memory Journal Active' 
+                      : 'Independent Memory View'}
+                  </h3>
+                  <p className="text-xs text-gray-700 font-medium mt-0.5">
+                    {currentUser?.role === 'elderly'
+                      ? 'Your memories are safely stored on this device. Link with your caregiver anytime to automatically share and synchronize these memories with them.'
+                      : 'You are viewing memories for this patient. Link to their account to enable real-time collaborative memory sharing.'}
+                  </p>
+                </div>
               </div>
-              <h3 className="text-lg font-black text-amber-950">
-                {currentUser?.role === 'elderly' 
-                  ? 'Connect Your Caregiver to Activate Your Shared Journal' 
-                  : 'No Assigned Patient Selected'}
-              </h3>
-              <p className="text-xs sm:text-sm text-gray-700 max-w-md mx-auto font-medium">
-                {currentUser?.role === 'elderly'
-                  ? 'To protect your privacy, your Memory Journal is strictly isolated and accessible only between you and your verified assigned caregiver. Please link with your caregiver to start logging memories.'
-                  : 'Caregivers can only view and create memories for patients who have linked to their Caregiver Code. Please connect with your patient first.'}
-              </p>
               {currentUser?.role === 'elderly' && onConnectCaregiver && (
                 <button
                   type="button"
                   onClick={onConnectCaregiver}
-                  className="px-5 py-2.5 bg-amber-700 hover:bg-amber-800 text-white font-black text-xs sm:text-sm rounded-xl shadow cursor-pointer transition-colors"
+                  className="px-3.5 py-2 bg-amber-700 hover:bg-amber-800 text-white font-black text-xs rounded-xl shadow cursor-pointer transition-colors whitespace-nowrap shrink-0"
                 >
-                  Link Caregiver Code Now
+                  Link Caregiver Code
                 </button>
               )}
             </div>
           )}
 
           {/* New Memory Form */}
-          {isAdding && relationshipInfo.assigned && (
+          {isAdding && (
             <form onSubmit={handleSaveEntry} className="bg-white border-2 border-amber-400 p-5 sm:p-6 rounded-2xl shadow-md space-y-4 animate-in fade-in">
               <div className="flex items-center justify-between border-b border-amber-100 pb-3">
                 <div>
@@ -595,16 +1006,18 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
               {/* Title & Location */}
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-black text-gray-700 uppercase tracking-wide mb-1">
-                    Memory Title
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-black text-gray-700 uppercase tracking-wide">
+                      Memory Title
+                    </label>
+                  </div>
                   <input
                     type="text"
                     required
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="e.g. Tea garden walks in Dibrugarh"
-                    className="w-full px-3 py-2 text-sm bg-gray-50 border border-amber-200 rounded-xl font-bold text-gray-900 focus:border-amber-500"
+                    className="w-full px-3 py-2 text-sm bg-gray-50 border border-amber-200 rounded-xl font-bold text-gray-900 focus:border-amber-500 focus:bg-white transition-colors"
                   />
                 </div>
                 <div>
@@ -639,7 +1052,7 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                       value={locationTag}
                       onChange={(e) => setLocationTag(e.target.value)}
                       placeholder="e.g. Shillong, Meghalaya"
-                      className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-amber-200 rounded-xl font-bold text-gray-900 focus:border-amber-500"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-amber-200 rounded-xl font-bold text-gray-900 focus:border-amber-500 focus:bg-white transition-colors"
                     />
                   </div>
                 </div>
@@ -679,33 +1092,125 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                 </button>
               </div>
 
-              {/* Audio Voice Recorder Widget */}
+              {/* Audio Voice Recorder Widget with Real Audio & AI Transcription */}
               {mediaType === 'audio' && (
-                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-ping' : 'bg-gray-400'}`} />
-                    <span className="text-xs font-black text-gray-800">
-                      {isRecording ? `Recording voice: ${recordingSeconds}s` : 'Spoken Voice Reminiscence'}
-                    </span>
+                <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-4 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`w-3.5 h-3.5 rounded-full ${isRecording ? 'bg-red-600 animate-ping' : (recordedAudioUrl || mediaUrl?.startsWith('data:audio')) ? 'bg-emerald-600' : 'bg-gray-400'}`} />
+                      <div>
+                        <h5 className="text-xs font-black text-amber-950 uppercase tracking-wide">
+                          {isRecording 
+                            ? `Recording Voice Memory: ${Math.floor(recordingSeconds / 60)}:${(recordingSeconds % 60).toString().padStart(2, '0')}`
+                            : (recordedAudioUrl || mediaUrl?.startsWith('data:audio'))
+                              ? 'Voice Memory Captured Ready'
+                              : 'Spoken Voice Recording'}
+                        </h5>
+                        <p className="text-[11px] text-gray-600 font-medium">
+                          {isRecording 
+                            ? 'Senior or caregiver is speaking into the microphone...' 
+                            : (recordedAudioUrl || mediaUrl?.startsWith('data:audio'))
+                              ? 'Your voice memory is recorded. You can preview, re-record, or transcribe to written text.'
+                              : 'Press record to speak your memory in your own voice and preserve it forever.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {!isRecording && !(recordedAudioUrl || mediaUrl?.startsWith('data:audio')) && (
+                        <button
+                          type="button"
+                          onClick={handleStartRealRecording}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                        >
+                          <Mic className="w-4 h-4" />
+                          <span>Start Voice Recording</span>
+                        </button>
+                      )}
+
+                      {isRecording && (
+                        <button
+                          type="button"
+                          onClick={handleStopRealRecording}
+                          className="px-4 py-2 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow cursor-pointer transition-colors animate-pulse"
+                        >
+                          <Square className="w-4 h-4 text-red-400" />
+                          <span>Finish Recording</span>
+                        </button>
+                      )}
+
+                      {(recordedAudioUrl || mediaUrl?.startsWith('data:audio')) && !isRecording && (
+                        <button
+                          type="button"
+                          onClick={handleStartRealRecording}
+                          className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 rounded-xl text-xs font-black flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-gray-600" />
+                          <span>Re-record</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {!isRecording ? (
-                    <button
-                      type="button"
-                      onClick={handleStartRecording}
-                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-black flex items-center gap-1 cursor-pointer"
-                    >
-                      <Mic className="w-3.5 h-3.5" />
-                      Start Voice Recording
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleStopRecording}
-                      className="px-3 py-1.5 bg-gray-800 hover:bg-black text-white rounded-lg text-xs font-black flex items-center gap-1 cursor-pointer"
-                    >
-                      <Square className="w-3.5 h-3.5" />
-                      Finish & Save Voice
-                    </button>
+
+                  {/* Live Equalizer/Soundwave visualizer bars during recording */}
+                  {isRecording && (
+                    <div className="bg-amber-100/70 rounded-xl p-3 flex items-center justify-center gap-1.5 h-12 overflow-hidden">
+                      {[35, 65, 25, 90, 50, 100, 45, 80, 55, 95, 30, 85, 60, 40, 75, 50, 88, 30].map((h, i) => (
+                        <div
+                          key={i}
+                          className="w-1.5 bg-red-600 rounded-full animate-pulse transition-all"
+                          style={{
+                            height: `${Math.max(10, (h * ((recordingSeconds % 3) + 1)) % 36)}px`,
+                            animationDelay: `${i * 65}ms`
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Recorded Audio Preview Player & AI Transcribe Action */}
+                  {(recordedAudioUrl || mediaUrl?.startsWith('data:audio')) && !isRecording && (
+                    <div className="bg-white border border-amber-200 rounded-xl p-3 flex items-center justify-between flex-wrap gap-3">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleTogglePreviewAudio}
+                          className={`w-9 h-9 rounded-full flex items-center justify-center text-white shadow-sm cursor-pointer transition-all ${
+                            isPreviewPlaying ? 'bg-amber-700 scale-105' : 'bg-amber-600 hover:bg-amber-700'
+                          }`}
+                          title={isPreviewPlaying ? 'Pause Audio Preview' : 'Play Audio Preview'}
+                        >
+                          {isPreviewPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                        </button>
+                        <div>
+                          <span className="text-xs font-black text-amber-950 block">Voice Memory Audio Preview</span>
+                          <span className="text-[11px] text-gray-500 font-bold">
+                            {recordingSeconds > 0 ? `Duration: ${Math.floor(recordingSeconds / 60)}:${(recordingSeconds % 60).toString().padStart(2, '0')}` : 'Captured Audio File'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* AI Voice-to-Text Button */}
+                      <button
+                        type="button"
+                        onClick={handleTranscribeRecordedAudio}
+                        disabled={isTranscribing}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition-all disabled:opacity-60"
+                        title="Transcribe spoken voice to written memory story"
+                      >
+                        {isTranscribing ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Transcribing with AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                            <span>✨ Transcribe Voice to Written Story</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -775,18 +1280,38 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                 </div>
               )}
 
-              {/* Narrative Content */}
+              {/* Narrative Content with Voice Dictation */}
               <div>
-                <label className="block text-xs font-black text-gray-700 uppercase tracking-wide mb-1">
-                  Story Details & Emotional Memory
-                </label>
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
+                  <label className="block text-xs font-black text-gray-700 uppercase tracking-wide">
+                    Story Details & Emotional Memory
+                  </label>
+                </div>
+
+                {/* Active Dictation Live Feedback Banner */}
+                {isDictating && dictationField === 'content' && (
+                  <div className="mb-2 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-300 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-xs animate-in fade-in">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full bg-red-600 animate-ping" />
+                      <span className="text-xs font-black text-red-950">
+                        Listening ({dictationLang === 'as-IN' ? 'অসমীয়া' : dictationLang === 'bn-IN' ? 'বাংলা' : dictationLang === 'hi-IN' ? 'हिन्दी' : 'English'})... Speak your memory aloud!
+                      </span>
+                    </div>
+                    {dictationInterim && (
+                      <span className="text-xs italic text-gray-600 font-medium truncate max-w-xs">
+                        &ldquo;{dictationInterim}&rdquo;
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <textarea
                   required
-                  rows={3}
+                  rows={4}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="Describe the sounds, smells, people present, and feelings..."
-                  className="w-full px-3 py-2 text-sm bg-gray-50 border border-amber-200 rounded-xl font-medium text-gray-900 focus:border-amber-500"
+                  placeholder="Speak or type memories here: Describe the sounds, smells, people present, and feelings from childhood festivals, family times, or tea gardens..."
+                  className="w-full px-3 py-2.5 text-sm bg-gray-50 border border-amber-200 rounded-xl font-medium text-gray-900 focus:border-amber-500 focus:bg-white transition-colors"
                 />
               </div>
 
@@ -825,12 +1350,12 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
               <Loader2 className="w-4 h-4 animate-spin text-amber-700" />
               <span>Loading shared memory journal...</span>
             </div>
-          ) : !relationshipInfo.assigned ? null : entries.length === 0 ? (
+          ) : entries.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-2xl border-2 border-dashed border-amber-200 p-8">
               <BookOpen className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-              <h4 className="text-base font-black text-amber-950">No Shared Memories Logged Yet</h4>
+              <h4 className="text-base font-black text-amber-950">No Memories Logged Yet</h4>
               <p className="text-xs text-gray-600 mt-1 max-w-sm mx-auto">
-                Either {relationshipInfo.patient_name} or Caregiver {relationshipInfo.caregiver_name} can log memorable stories, tea garden walks, childhood festivals, or voice recordings.
+                Log memorable stories, tea garden walks, childhood festivals, or record voice memories anytime.
               </p>
             </div>
           ) : (
@@ -841,7 +1366,7 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                   className="bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden flex flex-col sm:flex-row gap-4"
                 >
                   {/* Photo Thumbnail if available */}
-                  {item.media_url && (
+                  {item.media_url && !item.media_url.startsWith('data:audio') && item.media_type !== 'audio' && (
                     <div className="relative group sm:w-36 sm:h-36 h-48 rounded-xl overflow-hidden shrink-0 border border-amber-200 bg-amber-50">
                       <img
                         src={item.media_url}
@@ -884,7 +1409,7 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                           )}
 
                           <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
-                            {item.media_type === 'audio' ? '🎙️ Voice Note' : item.media_type === 'photo' ? '📷 Photo' : '📝 Story'}
+                            {item.media_type === 'audio' || item.media_url?.startsWith('data:audio') ? '🎙️ Voice Note' : item.media_type === 'photo' ? '📷 Photo' : '📝 Story'}
                           </span>
 
                           <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
@@ -921,11 +1446,51 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                       {item.content}
                     </p>
 
+                    {/* In-Card Voice Memory Audio Player */}
+                    {(item.media_type === 'audio' || item.media_url?.startsWith('data:audio')) && (
+                      <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3 flex items-center justify-between flex-wrap gap-2 my-2">
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCardAudio(item)}
+                            className={`w-9 h-9 rounded-full flex items-center justify-center text-white shadow-sm cursor-pointer transition-all ${
+                              activeAudioPlayingId === item.id ? 'bg-red-600 scale-105 animate-pulse' : 'bg-amber-700 hover:bg-amber-800'
+                            }`}
+                            title={activeAudioPlayingId === item.id ? 'Pause Voice Recording' : 'Play Voice Recording'}
+                          >
+                            {activeAudioPlayingId === item.id ? (
+                              <Pause className="w-4 h-4" />
+                            ) : (
+                              <Play className="w-4 h-4 ml-0.5" />
+                            )}
+                          </button>
+                          <div>
+                            <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                              <Headphones className="w-3.5 h-3.5 text-amber-700" />
+                              Recorded Voice Memory
+                            </span>
+                            <span className="text-[11px] text-gray-600 font-bold">
+                              {item.audio_duration ? `Voice Duration: ${item.audio_duration}` : 'Original Voice Recording'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {activeAudioPlayingId === item.id && (
+                          <div className="flex items-center gap-1 h-5 px-2">
+                            <span className="w-1 bg-amber-700 rounded-full animate-pulse h-3" />
+                            <span className="w-1 bg-amber-600 rounded-full animate-pulse h-5" />
+                            <span className="w-1 bg-amber-700 rounded-full animate-pulse h-2" />
+                            <span className="w-1 bg-amber-600 rounded-full animate-pulse h-4" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Audio Playback Controls */}
                     <div className="pt-2 flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => handlePlayVoice(item)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer ${
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black shadow-xs transition-all cursor-pointer ${
                           playingId === item.id
                             ? 'bg-amber-700 text-white animate-pulse'
                             : 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
@@ -934,17 +1499,17 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                         {playingId === item.id ? (
                           <>
                             <Pause className="w-3.5 h-3.5" />
-                            <span>Pause Voice Playback</span>
+                            <span>Pause Voice Reading</span>
                           </>
                         ) : (
                           <>
                             <Volume2 className="w-3.5 h-3.5 text-amber-700" />
-                            <span>Listen to Voice Story</span>
+                            <span>Read Story Aloud (TTS)</span>
                           </>
                         )}
                       </button>
 
-                      {item.audio_duration && (
+                      {item.audio_duration && !(item.media_type === 'audio' || item.media_url?.startsWith('data:audio')) && (
                         <span className="text-[11px] font-bold text-gray-500">
                           Audio Length: {item.audio_duration}
                         </span>
