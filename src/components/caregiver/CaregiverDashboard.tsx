@@ -300,19 +300,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
         </div>
       )}
 
-      {/* Prominent Ethical Guardrail Banner */}
-      <div className="bg-[#FAFAFA] border-2 border-[#47D6B6] rounded-2xl p-4 flex items-start gap-3 text-[#1E293B] shadow-sm">
-        <Info className="w-6 h-6 text-[#2794EB] shrink-0 mt-0.5" />
-        <div>
-          <h4 className="font-black text-sm tracking-wide uppercase text-[#1E293B]">
-            {t.monitoring_protocol}
-          </h4>
-          <p className="text-sm leading-relaxed text-slate-600 font-medium">
-            {trendData?.ethical_disclaimer || t.ethical_disclaimer_text}
-          </p>
-        </div>
-      </div>
-
       {/* If no patient assigned to this caregiver, show strict privacy & access protection card */}
       {(!currentPatient || allPatients.length === 0) ? (
         <div className="bg-white rounded-3xl p-8 sm:p-12 border-2 border-[#47D6B6] shadow-sm text-center space-y-6">

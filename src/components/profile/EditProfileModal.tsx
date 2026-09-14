@@ -839,10 +839,24 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
                 {/* Caregiver Code (Locked - Read-Only) */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-blue-700" />
-                    Caregiver Code (Locked)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-blue-700" />
+                      Caregiver Code (Locked)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (caregiverCode) {
+                          navigator.clipboard?.writeText(caregiverCode);
+                          soundEffects.playSuccessChime();
+                        }
+                      }}
+                      className="text-[10px] font-black text-blue-700 hover:underline cursor-pointer"
+                    >
+                      Copy Code
+                    </button>
+                  </div>
                   <div className="relative">
                     <input
                       id="caregiver-code-input"
