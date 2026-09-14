@@ -86,10 +86,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   
   // Role-specific fields
   const patientId = user.patient_id || (user.role === 'elderly' ? `PT-${Math.floor(1000 + Math.random() * 9000)}` : '');
+  const caregiverCode = user.caregiver_code || (user.role === 'caregiver' ? `CG-${Math.floor(1000 + Math.random() * 9000)}` : '');
   const [age, setAge] = useState<number>(user.age || 72);
   const [diagnosisNote, setDiagnosisNote] = useState(user.diagnosis_note || '');
   const [dementiaStage, setDementiaStage] = useState<DementiaStage>(user.dementia_stage || 'mild');
-  const [caregiverCode, setCaregiverCode] = useState(user.caregiver_code || '');
   const [emergencyName, setEmergencyName] = useState(user.emergency_contact?.name || '');
   const [emergencyPhone, setEmergencyPhone] = useState(user.emergency_contact?.phone || '');
   const [emergencyRelation, setEmergencyRelation] = useState(user.emergency_contact?.relation || '');
@@ -229,7 +229,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         connected_caregiver_id: connectedCaregiverId.trim() || undefined,
         connected_caregiver_name: connectedCaregiverName.trim() || undefined,
       } : {}),
-      ...(!isElderly && (caregiverCode.trim() || user.caregiver_code) ? { caregiver_code: caregiverCode.trim() || user.caregiver_code } : {}),
+      ...(!isElderly && (user.caregiver_code || caregiverCode) ? { caregiver_code: user.caregiver_code || caregiverCode } : {}),
       ...((emergencyName.trim() && emergencyPhone.trim()) ? {
         emergency_contact: {
           name: emergencyName.trim(),
@@ -844,21 +844,26 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                   </div>
                 </div>
 
-                {/* Caregiver Code */}
+                {/* Caregiver Code (Locked - Read-Only) */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-700">
-                    Caregiver Code (For Seniors to Link)
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-blue-700" />
+                    Caregiver Code (Locked)
                   </label>
                   <div className="relative">
-                    <ShieldCheck className="w-4 h-4 absolute left-3 top-3.5 text-blue-600" />
                     <input
+                      id="caregiver-code-input"
                       type="text"
+                      readOnly
                       value={caregiverCode}
-                      onChange={(e) => setCaregiverCode(e.target.value.toUpperCase())}
-                      placeholder="CG-101"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none text-sm font-black bg-white uppercase"
+                      placeholder="e.g. CG-1001"
+                      className="w-full font-mono uppercase pl-3 pr-9 py-2.5 rounded-xl border-2 border-stone-200 bg-stone-100 text-stone-700 outline-none text-sm font-black cursor-not-allowed select-all"
                     />
+                    <Lock className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
+                  <p className="text-[10px] text-gray-500 font-semibold">
+                    Permanent identifier locked for senior linking and care coordination.
+                  </p>
                 </div>
 
                 {/* Specialty / Role Description */}

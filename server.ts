@@ -1010,11 +1010,13 @@ app.post('/api/users', (req: Request, res: Response) => {
   const existingIdx = id ? users.findIndex(u => u.id === id) : -1;
   if (existingIdx >= 0) {
     const existingPatientId = users[existingIdx].patient_id;
+    const existingCaregiverCode = users[existingIdx].caregiver_code;
     users[existingIdx] = {
       ...users[existingIdx],
       ...req.body,
       id,
       ...(existingPatientId ? { patient_id: existingPatientId } : {}),
+      ...(existingCaregiverCode ? { caregiver_code: existingCaregiverCode } : {}),
       updated_at: new Date().toISOString()
     };
     saveUsersToDisk(users);

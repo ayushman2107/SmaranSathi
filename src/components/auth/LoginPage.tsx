@@ -1796,17 +1796,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-black text-[#1E293B]">
-                      Caregiver Code:
+                    <label className="block text-xs font-black text-[#1E293B] flex items-center gap-1">
+                      <Lock className="w-3.5 h-3.5 text-stone-500" />
+                      Caregiver Code (Locked):
                     </label>
-                    <input
-                      type="text"
-                      required
-                      value={caregiverCode}
-                      onChange={(e) => setCaregiverCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. CG-XXXX"
-                      className="w-full min-h-[50px] px-4 font-mono font-black text-sm uppercase bg-white text-[#1E293B] border-2 border-[#47D6B6] focus:border-[#47D6B6] rounded-xl outline-none shadow-2xs"
-                    />
+                    <div className="relative">
+                      <input
+                        id="caregiver-code-registration-input"
+                        type="text"
+                        readOnly
+                        value={caregiverCode}
+                        placeholder="e.g. CG-XXXX"
+                        className="w-full min-h-[50px] pl-4 pr-9 font-mono font-black text-sm uppercase bg-stone-100 text-stone-700 border-2 border-stone-200 rounded-xl outline-none cursor-not-allowed select-all shadow-2xs"
+                      />
+                      <Lock className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
                   </div>
 
                   <div className="space-y-1.5">
