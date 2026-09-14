@@ -37,6 +37,11 @@ import { ConnectCaregiverModal } from './components/elderly/ConnectCaregiverModa
 import { EditProfileModal } from './components/profile/EditProfileModal';
 import { CaregiverSOSAlertModal } from './components/caregiver/CaregiverSOSAlertModal';
 import { isReminderDue, getTriggerKey, calculateSnoozeTime } from './utils/reminderScheduler';
+import { 
+  isFollowupReminderDue, 
+  shouldAlertCaregiverMissed, 
+  createMissedMedicationAlert 
+} from './utils/medicationScheduler';
 import { recordLevelCompletion } from './utils/gameProgress';
 import { autoDetectLocation } from './utils/locationDetector';
 import { computeClientSideTrends } from './utils/cognitiveScoring';
@@ -198,6 +203,7 @@ export default function App() {
       const now = new Date();
       for (const rem of reminders) {
         if (!rem.completed) {
+          // 1. Exact Scheduled Time Alarm
           if (isReminderDue(rem, now)) {
             const key = getTriggerKey(rem.id, now);
             if (!triggeredKeysRef.current.has(key)) {
@@ -207,6 +213,44 @@ export default function App() {
               break;
             }
           }
+
+          // 2. Follow-Up Reminder (15-30 minutes if not acknowledged)
+          if (isFollowupReminderDue(rem, now)) {
+            const followupKey = `followup-${rem.id}-${now.toDateString()}`;
+            if (!triggeredKeysRef.current.has(followupKey)) {
+              triggeredKeysRef.current.add(followupKey);
+              setActiveAlarmReminder({
+                ...rem,
+                spoken_prompt: `Friendly follow-up reminder: Please remember to take ${rem.medication_name || rem.title}.`,
+                instructions: `Gentle Follow-Up: Scheduled dose pending confirmation (${rem.time}).`
+              });
+              setIsAlarmModalOpen(true);
+              break;
+            }
+          }
+
+          // 3. Caregiver Alert if Missed (>30 minutes past scheduled time for caregiver-scheduled meds)
+          if (shouldAlertCaregiverMissed(rem, now)) {
+            const missedKey = `missed-alert-${rem.id}-${now.toDateString()}`;
+            if (!triggeredKeysRef.current.has(missedKey)) {
+              triggeredKeysRef.current.add(missedKey);
+              
+              const patientUser = (rem.user_id ? users.find((u) => u.id === rem.user_id) : null) || currentUser;
+              const patientName = patientUser?.name || 'Patient';
+              const patientId = patientUser?.id || rem.user_id || 'patient-id';
+              const caregiverId = rem.caregiver_id || currentUser?.connected_caregiver_id || (currentUser?.role === 'caregiver' ? currentUser.id : undefined);
+
+              const missedAlert = createMissedMedicationAlert(rem, patientName, patientId, caregiverId);
+              
+              setAlerts((prev) => [missedAlert, ...prev]);
+              saveAlertToFirebase(missedAlert).catch(() => {});
+              fetch('/api/alerts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(missedAlert)
+              }).catch(() => {});
+            }
+          }
         }
       }
     };
@@ -214,7 +258,7 @@ export default function App() {
     checkDueReminders();
     const timer = setInterval(checkDueReminders, 4000);
     return () => clearInterval(timer);
-  }, [reminders]);
+  }, [reminders, users, currentUser]);
 
   // Feedback Modal State
   const [feedbackOpen, setFeedbackOpen] = useState<boolean>(false);

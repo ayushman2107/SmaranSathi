@@ -22,7 +22,9 @@ import {
   ShieldCheck, 
   Info,
   ChevronRight,
-  Filter
+  Filter,
+  Activity,
+  UserCheck
 } from 'lucide-react';
 import { 
   Reminder, 
@@ -35,6 +37,7 @@ import {
 import { soundEffects, speakText } from '../../utils/speechAndAudio';
 import { Bell } from 'lucide-react';
 import { CAREGIVER_TRANSLATIONS } from '../../data/caregiverTranslations';
+import { computeMedicationStatus, getStatusBadgeConfig } from '../../utils/medicationScheduler';
 
 interface ScheduleRemindersManagerProps {
   currentPatient: User;
@@ -186,11 +189,14 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
   // Schedule Form State
   const [title, setTitle] = useState('');
   const [type, setType] = useState<ReminderType>('medication');
+  const [medicationName, setMedicationName] = useState('Donepezil');
+  const [dosage, setDosage] = useState('5mg (1 Tablet)');
+  const [frequency, setFrequency] = useState('Once Daily (Morning)');
   const [time, setTime] = useState('08:30 AM');
   const [customTime, setCustomTime] = useState('08:30');
   const [recurrence, setRecurrence] = useState<RecurrenceType>('daily');
-  const [priority, setPriority] = useState<ReminderPriority>('medium');
-  const [instructions, setInstructions] = useState('');
+  const [priority, setPriority] = useState<ReminderPriority>('high');
+  const [instructions, setInstructions] = useState('Take with warm water after breakfast.');
   const [spokenPrompt, setSpokenPrompt] = useState('');
   const [audioChime, setAudioChime] = useState(true);
   const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().split('T')[0]);
@@ -201,6 +207,11 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
     soundEffects.playGentleTap(520);
     setTitle(preset.title);
     setType(preset.type);
+    if (preset.type === 'medication') {
+      setMedicationName(preset.title.split(' ')[1] || preset.title);
+      setDosage('5mg (1 Tablet)');
+      setFrequency('Once Daily');
+    }
     setTime(preset.time);
     setRecurrence(preset.recurrence);
     setPriority(preset.priority);
@@ -226,26 +237,47 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
   // Submit Schedule Form
   const handleSubmitSchedule = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    const finalTitle = type === 'medication' && medicationName.trim()
+      ? (dosage.trim() ? `${medicationName.trim()} - ${dosage.trim()}` : medicationName.trim())
+      : title.trim();
+
+    if (!finalTitle) return;
 
     soundEffects.playSuccessChime();
+
+    const isMed = type === 'medication';
+    const spoken = spokenPrompt.trim() || 
+      (isMed 
+        ? `${currentPatient.name.split(' ')[0]}, it is time for your medicine: ${medicationName || finalTitle} ${dosage ? '(' + dosage + ')' : ''}. ${instructions}` 
+        : finalTitle);
 
     onAddReminder({
       user_id: currentPatient.id,
       type,
-      title: title.trim(),
+      title: finalTitle,
       time,
       recurrence,
       instructions: instructions.trim(),
       created_by: caregiverName,
       scheduled_date: scheduledDate,
-      priority,
+      priority: isMed ? (priority || 'high') : priority,
       audio_chime: audioChime,
-      spoken_prompt: spokenPrompt.trim() || title.trim()
+      spoken_prompt: spoken,
+      // MMS Specific Tagging
+      is_caregiver_scheduled: isMed ? true : undefined,
+      source: 'caregiver',
+      caregiver_id: currentPatient.connected_caregiver_id || 'caregiver',
+      caregiver_name: caregiverName,
+      medication_name: isMed ? (medicationName.trim() || finalTitle) : undefined,
+      dosage: isMed ? dosage.trim() : undefined,
+      frequency: isMed ? frequency.trim() : undefined,
+      scheduled_times: [time]
     });
 
-    setFormSuccessMessage(`Scheduled "${title}" successfully for ${currentPatient.name}!`);
+    setFormSuccessMessage(`Scheduled "${finalTitle}" successfully for ${currentPatient.name}!`);
     setTitle('');
+    setMedicationName('');
+    setDosage('');
     setInstructions('');
     setSpokenPrompt('');
     setTimeout(() => {
@@ -455,21 +487,6 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Title */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-gray-700">
-                Reminder Title *
-              </label>
-              <input
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Afternoon CTC Tea & Donepezil 5mg"
-                className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-[#47D6B6] focus:outline-none font-bold text-sm text-gray-900"
-              />
-            </div>
-
             {/* Category / Type */}
             <div className="space-y-1.5">
               <label className="text-xs font-black uppercase tracking-wider text-gray-700">
@@ -480,7 +497,7 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
                 onChange={(e) => setType(e.target.value as ReminderType)}
                 className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-[#47D6B6] focus:outline-none font-bold text-sm text-gray-900 bg-white cursor-pointer"
               >
-                <option value="medication">💊 Medication Dose</option>
+                <option value="medication">💊 Medication Dose (MMS Tracked)</option>
                 <option value="meal">🍲 Meal / Nutrition</option>
                 <option value="exercise">🚶 Physical Activity / Courtyard Walk</option>
                 <option value="hydration">💧 Hydration / Coconut Water</option>
@@ -490,6 +507,77 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
                 <option value="appointment">🩺 Medical / Doctor Consultation</option>
               </select>
             </div>
+
+            {/* Title / Name */}
+            {type === 'medication' ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-rose-700">
+                  Medication Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={medicationName}
+                  onChange={(e) => {
+                    setMedicationName(e.target.value);
+                    setTitle(e.target.value);
+                  }}
+                  placeholder="e.g. Donepezil / Memantine / Metformin"
+                  className="w-full px-4 py-3 rounded-xl border-2 border-rose-300 focus:border-rose-500 focus:outline-none font-bold text-sm text-gray-900 bg-rose-50/30"
+                />
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-gray-700">
+                  Reminder Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Afternoon CTC Tea & Garden Stroll"
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-[#47D6B6] focus:outline-none font-bold text-sm text-gray-900"
+                />
+              </div>
+            )}
+
+            {/* If medication: Dosage & Frequency */}
+            {type === 'medication' && (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black uppercase tracking-wider text-rose-700">
+                    Dosage / Strength *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={dosage}
+                    onChange={(e) => setDosage(e.target.value)}
+                    placeholder="e.g. 5mg (1 Tablet) / 10ml"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-rose-200 focus:border-rose-500 focus:outline-none font-bold text-sm text-gray-900 bg-white"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black uppercase tracking-wider text-rose-700">
+                    Frequency / Interval *
+                  </label>
+                  <select
+                    value={frequency}
+                    onChange={(e) => setFrequency(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border-2 border-rose-200 focus:border-rose-500 focus:outline-none font-bold text-sm text-gray-900 bg-white cursor-pointer"
+                  >
+                    <option value="Once Daily (Morning)">Once Daily (Morning)</option>
+                    <option value="Once Daily (Night)">Once Daily (Night / Bedtime)</option>
+                    <option value="Twice Daily (Morning & Evening)">Twice Daily (Morning & Evening)</option>
+                    <option value="Thrice Daily (After Meals)">Thrice Daily (After Meals)</option>
+                    <option value="Every 8 Hours">Every 8 Hours</option>
+                    <option value="As Needed (PRN)">As Needed (PRN)</option>
+                  </select>
+                </div>
+              </>
+            )}
 
             {/* Time Picker */}
             <div className="space-y-1.5">
@@ -537,7 +625,7 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
             {/* Recurrence */}
             <div className="space-y-1.5">
               <label className="text-xs font-black uppercase tracking-wider text-gray-700">
-                Recurrence Frequency
+                Recurrence Schedule
               </label>
               <select
                 value={recurrence}
@@ -735,121 +823,303 @@ export const ScheduleRemindersManager: React.FC<ScheduleRemindersManagerProps> =
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {filteredReminders.map((rem) => (
-              <div
-                key={rem.id}
-                className={`p-4 rounded-2xl border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
-                  rem.completed
-                    ? 'bg-emerald-50/50 border-emerald-200 opacity-80'
-                    : rem.priority === 'high'
-                    ? 'bg-rose-50/40 border-rose-200'
-                    : 'bg-white border-orange-100 hover:border-orange-200 shadow-xs'
-                }`}
-              >
-                <div className="flex items-start gap-3.5">
-                  <button
-                    onClick={() => {
-                      soundEffects.playGentleTap(500);
-                      onToggleReminder(rem.id);
-                    }}
-                    className="mt-0.5 text-emerald-600 focus:outline-none cursor-pointer"
-                    title={rem.completed ? 'Mark pending' : 'Mark completed'}
-                  >
-                    {rem.completed ? (
-                      <CheckCircle2 className="w-7 h-7 fill-emerald-100 text-emerald-600" />
-                    ) : (
-                      <Circle className="w-7 h-7 text-gray-300 hover:text-emerald-500" />
-                    )}
-                  </button>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="p-1.5 rounded-lg bg-gray-50 border border-gray-200">
-                        {getReminderIcon(rem.type)}
-                      </div>
-                      <h4 className={`text-base font-black ${rem.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>
-                        {rem.title}
-                      </h4>
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-orange-100 text-orange-800 border border-orange-200">
-                        {rem.time}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 uppercase">
-                        {rem.recurrence}
-                      </span>
-                      {rem.priority === 'high' && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
-                          Urgent
-                        </span>
-                      )}
+          <div className="space-y-6">
+            {/* Section 1: Caregiver-Scheduled Medications (Distinct MMS Section) */}
+            {(activeFilter === 'all' || activeFilter === 'medication') && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-rose-100 text-rose-700">
+                      <Pill className="w-4 h-4" />
                     </div>
-
-                    {rem.instructions && (
-                      <p className="text-xs text-gray-600 font-medium pl-1">
-                        {rem.instructions}
-                      </p>
-                    )}
-
-                    <div className="flex items-center gap-3 text-[11px] text-gray-400 font-bold pl-1 pt-0.5">
-                      <span>By: {rem.created_by || 'Caregiver'}</span>
-                      {rem.spoken_prompt && (
-                        <span className="text-orange-700 italic">
-                          "🗣️ {rem.spoken_prompt}"
-                        </span>
-                      )}
-                    </div>
+                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                      Caregiver-Scheduled Prescriptions & Medications
+                    </h4>
                   </div>
+                  <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                    {filteredReminders.filter(r => r.type === 'medication' || r.is_caregiver_scheduled).length} Prescriptions Active
+                  </span>
                 </div>
 
-                {/* Quick Actions */}
-                <div className="flex items-center gap-2 self-end md:self-center shrink-0">
-                  {/* Test Alarm with Melodic Chime & Spoken Prompt */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundEffects.playGentleTap(520);
-                      if (onTriggerAlarm) {
-                        onTriggerAlarm(rem);
-                      } else {
-                        const text = rem.spoken_prompt || rem.title;
-                        speakText(text, currentPatient.language_pref);
-                      }
-                    }}
-                    className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs flex items-center gap-1.5 shadow-sm active:translate-y-0.5 cursor-pointer"
-                    title="Test Alarm Sound & Voice Notification"
-                  >
-                    <Bell className="w-3.5 h-3.5" />
-                    <span>Test Alarm</span>
-                  </button>
+                {filteredReminders.filter(r => r.type === 'medication' || r.is_caregiver_scheduled).length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-400 font-bold">
+                    No caregiver-scheduled medications found. Use the scheduler above to add prescriptions.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredReminders.filter(r => r.type === 'medication' || r.is_caregiver_scheduled).map((rem) => {
+                      const status = computeMedicationStatus(rem);
+                      const badge = getStatusBadgeConfig(status);
 
-                  {/* Test Audio readout */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = rem.spoken_prompt || rem.title;
-                      speakText(text, currentPatient.language_pref);
-                    }}
-                    className="p-2 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 cursor-pointer transition-colors"
-                    title="Test Voice Readout"
-                  >
-                    <Volume2 className="w-4 h-4" />
-                  </button>
+                      return (
+                        <div
+                          key={rem.id}
+                          className={`p-4 rounded-2xl border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
+                            rem.completed
+                              ? 'bg-emerald-50/50 border-emerald-200'
+                              : status === 'missed'
+                              ? 'bg-red-50/60 border-red-300'
+                              : status === 'due'
+                              ? 'bg-amber-50/60 border-amber-300 shadow-sm'
+                              : 'bg-white border-rose-100 hover:border-rose-200 shadow-xs'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3.5">
+                            <button
+                              onClick={() => {
+                                soundEffects.playGentleTap(500);
+                                onToggleReminder(rem.id);
+                              }}
+                              className="mt-0.5 text-emerald-600 focus:outline-none cursor-pointer"
+                              title={rem.completed ? 'Mark pending' : 'Mark completed / taken'}
+                            >
+                              {rem.completed ? (
+                                <CheckCircle2 className="w-7 h-7 fill-emerald-100 text-emerald-600" />
+                              ) : (
+                                <Circle className="w-7 h-7 text-gray-300 hover:text-emerald-500" />
+                              )}
+                            </button>
 
-                  {/* Delete button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundEffects.playGentleTap(350);
-                      onDeleteReminder(rem.id);
-                    }}
-                    className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer transition-colors"
-                    title="Delete Reminder"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="p-1.5 rounded-lg bg-rose-100 text-rose-700">
+                                  <Pill className="w-4 h-4" />
+                                </div>
+                                <h4 className={`text-base font-black ${rem.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+                                  {rem.medication_name || rem.title}
+                                </h4>
+
+                                {rem.dosage && (
+                                  <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                    💊 {rem.dosage}
+                                  </span>
+                                )}
+
+                                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {rem.time}
+                                </span>
+
+                                {/* MMS Live Adherence Status Badge */}
+                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border flex items-center gap-1 ${badge.bg}`}>
+                                  <span className={`w-2 h-2 rounded-full ${badge.dot}`} />
+                                  <span>{badge.label}</span>
+                                </span>
+                              </div>
+
+                              {rem.instructions && (
+                                <p className="text-xs text-slate-700 font-medium pl-1">
+                                  📝 <strong>Instructions:</strong> {rem.instructions}
+                                </p>
+                              )}
+
+                              <div className="flex items-center gap-3 text-[11px] text-slate-500 font-bold pl-1 pt-0.5 flex-wrap">
+                                <span className="flex items-center gap-1 text-slate-700">
+                                  <UserCheck className="w-3.5 h-3.5 text-teal-600" />
+                                  Scheduled by: <strong className="text-teal-700">{rem.caregiver_name || rem.created_by || caregiverName}</strong>
+                                </span>
+                                {rem.frequency && (
+                                  <span>• Frequency: <strong>{rem.frequency}</strong></span>
+                                )}
+                                {rem.spoken_prompt && (
+                                  <span className="text-orange-800 italic">
+                                    "🗣️ {rem.spoken_prompt}"
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Quick Actions */}
+                          <div className="flex items-center gap-2 self-end md:self-center shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundEffects.playGentleTap(520);
+                                if (onTriggerAlarm) {
+                                  onTriggerAlarm(rem);
+                                } else {
+                                  const text = rem.spoken_prompt || rem.title;
+                                  speakText(text, currentPatient.language_pref);
+                                }
+                              }}
+                              className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs flex items-center gap-1.5 shadow-sm active:translate-y-0.5 cursor-pointer"
+                              title="Test Alarm Sound & Voice Notification"
+                            >
+                              <Bell className="w-3.5 h-3.5" />
+                              <span>Test Alarm</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const text = rem.spoken_prompt || rem.title;
+                                speakText(text, currentPatient.language_pref);
+                              }}
+                              className="p-2 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 cursor-pointer transition-colors"
+                              title="Test Voice Readout"
+                            >
+                              <Volume2 className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundEffects.playGentleTap(350);
+                                onDeleteReminder(rem.id);
+                              }}
+                              className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer transition-colors"
+                              title="Cancel / Delete Prescription"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            ))}
+            )}
+
+            {/* Section 2: Other Daily Routines & Activities */}
+            {(activeFilter === 'all' || activeFilter === 'routine') && (
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-teal-100 text-teal-700">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                      Daily Routines, Hydration & Wellness Schedules
+                    </h4>
+                  </div>
+                  <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
+                    {filteredReminders.filter(r => r.type !== 'medication' && !r.is_caregiver_scheduled).length} Routines Active
+                  </span>
+                </div>
+
+                {filteredReminders.filter(r => r.type !== 'medication' && !r.is_caregiver_scheduled).length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-400 font-bold">
+                    No daily routines matching this filter.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredReminders.filter(r => r.type !== 'medication' && !r.is_caregiver_scheduled).map((rem) => (
+                      <div
+                        key={rem.id}
+                        className={`p-4 rounded-2xl border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
+                          rem.completed
+                            ? 'bg-emerald-50/50 border-emerald-200 opacity-80'
+                            : rem.priority === 'high'
+                            ? 'bg-rose-50/40 border-rose-200'
+                            : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3.5">
+                          <button
+                            onClick={() => {
+                              soundEffects.playGentleTap(500);
+                              onToggleReminder(rem.id);
+                            }}
+                            className="mt-0.5 text-emerald-600 focus:outline-none cursor-pointer"
+                            title={rem.completed ? 'Mark pending' : 'Mark completed'}
+                          >
+                            {rem.completed ? (
+                              <CheckCircle2 className="w-7 h-7 fill-emerald-100 text-emerald-600" />
+                            ) : (
+                              <Circle className="w-7 h-7 text-gray-300 hover:text-emerald-500" />
+                            )}
+                          </button>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <div className="p-1.5 rounded-lg bg-gray-50 border border-gray-200">
+                                {getReminderIcon(rem.type)}
+                              </div>
+                              <h4 className={`text-base font-black ${rem.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+                                {rem.title}
+                              </h4>
+                              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-orange-100 text-orange-800 border border-orange-200">
+                                {rem.time}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 uppercase">
+                                {rem.recurrence}
+                              </span>
+                              {rem.priority === 'high' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                  Urgent
+                                </span>
+                              )}
+                            </div>
+
+                            {rem.instructions && (
+                              <p className="text-xs text-gray-600 font-medium pl-1">
+                                {rem.instructions}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-3 text-[11px] text-gray-400 font-bold pl-1 pt-0.5">
+                              <span>By: {rem.created_by || 'Caregiver'}</span>
+                              {rem.spoken_prompt && (
+                                <span className="text-orange-700 italic">
+                                  "🗣️ {rem.spoken_prompt}"
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Quick Actions */}
+                        <div className="flex items-center gap-2 self-end md:self-center shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              soundEffects.playGentleTap(520);
+                              if (onTriggerAlarm) {
+                                onTriggerAlarm(rem);
+                              } else {
+                                const text = rem.spoken_prompt || rem.title;
+                                speakText(text, currentPatient.language_pref);
+                              }
+                            }}
+                            className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs flex items-center gap-1.5 shadow-sm active:translate-y-0.5 cursor-pointer"
+                            title="Test Alarm Sound & Voice Notification"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                            <span>Test Alarm</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const text = rem.spoken_prompt || rem.title;
+                              speakText(text, currentPatient.language_pref);
+                            }}
+                            className="p-2 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 cursor-pointer transition-colors"
+                            title="Test Voice Readout"
+                          >
+                            <Volume2 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              soundEffects.playGentleTap(350);
+                              onDeleteReminder(rem.id);
+                            }}
+                            className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer transition-colors"
+                            title="Delete Reminder"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

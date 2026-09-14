@@ -156,11 +156,152 @@ class AudioService {
     } catch {}
   }
 
-  // Sequence tone by index (C, D, E, G, A)
-  playSequenceTone(index: number) {
-    const scale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25];
-    const freq = scale[index % scale.length];
-    this.playGentleTap(freq);
+  // High sound / High-clarity instrument-specific rhythm tones
+  playRhythmInstrumentTone(index: number, options?: { volume?: number; highBoost?: boolean }) {
+    try {
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      const now = ctx.currentTime;
+      const volMultiplier = options?.volume !== undefined ? options.volume : (options?.highBoost ? 1.6 : 1.3);
+
+      switch (index % 4) {
+        case 0: {
+          // 🥁 BIHU DHOL (Acoustic Folk Drum): Deep resonant strike + high slap click
+          const oscBody = ctx.createOscillator();
+          const oscSlap = ctx.createOscillator();
+          const gainBody = ctx.createGain();
+          const gainSlap = ctx.createGain();
+
+          oscBody.type = 'sine';
+          oscBody.frequency.setValueAtTime(240, now);
+          oscBody.frequency.exponentialRampToValueAtTime(80, now + 0.35);
+
+          gainBody.gain.setValueAtTime(0, now);
+          gainBody.gain.linearRampToValueAtTime(0.38 * volMultiplier, now + 0.008);
+          gainBody.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+          oscSlap.type = 'triangle';
+          oscSlap.frequency.setValueAtTime(720, now);
+          oscSlap.frequency.exponentialRampToValueAtTime(220, now + 0.08);
+
+          gainSlap.gain.setValueAtTime(0, now);
+          gainSlap.gain.linearRampToValueAtTime(0.28 * volMultiplier, now + 0.005);
+          gainSlap.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+          oscBody.connect(gainBody);
+          gainBody.connect(ctx.destination);
+          oscSlap.connect(gainSlap);
+          gainSlap.connect(ctx.destination);
+
+          oscBody.start(now);
+          oscBody.stop(now + 0.45);
+          oscSlap.start(now);
+          oscSlap.stop(now + 0.15);
+          break;
+        }
+        case 1: {
+          // 🎺 PEPA HORN (Assamese Buffalo Horn Pipe): Piercing, bright, high brass tone with harmonic overtones
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const biquad = ctx.createBiquadFilter();
+
+          osc1.type = 'sawtooth';
+          osc1.frequency.setValueAtTime(659.25, now); // E5 high pitch
+          osc2.type = 'triangle';
+          osc2.frequency.setValueAtTime(987.77, now); // B5 fifth overtone
+
+          biquad.type = 'lowpass';
+          biquad.frequency.setValueAtTime(3400, now);
+          biquad.Q.setValueAtTime(3.8, now);
+
+          gain.gain.setValueAtTime(0, now);
+          gain.gain.linearRampToValueAtTime(0.32 * volMultiplier, now + 0.03);
+          gain.gain.setValueAtTime(0.26 * volMultiplier, now + 0.28);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+
+          osc1.connect(biquad);
+          osc2.connect(biquad);
+          biquad.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc1.start(now);
+          osc2.start(now);
+          osc1.stop(now + 0.6);
+          osc2.stop(now + 0.6);
+          break;
+        }
+        case 2: {
+          // 🍋 KAJI NEMU / CITRUS CHIME (Crystalline Bright Bell / High Marimba): Sparkle C6 & G6
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const gain = ctx.createGain();
+
+          osc1.type = 'sine';
+          osc1.frequency.setValueAtTime(1046.50, now); // C6 crystal high note
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(1567.98, now); // G6 high shimmer
+
+          gain.gain.setValueAtTime(0, now);
+          gain.gain.linearRampToValueAtTime(0.35 * volMultiplier, now + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+
+          osc1.connect(gain);
+          osc2.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc1.start(now);
+          osc2.start(now);
+          osc1.stop(now + 0.7);
+          osc2.stop(now + 0.7);
+          break;
+        }
+        case 3:
+        default: {
+          // 🦏 RHINO FRIEND / MAJESTIC FOLK GONG: Resonant high melodic gong with sparkling upper partials
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const osc3 = ctx.createOscillator();
+          const gain = ctx.createGain();
+
+          osc1.type = 'sine';
+          osc1.frequency.setValueAtTime(523.25, now); // C5
+          osc2.type = 'triangle';
+          osc2.frequency.setValueAtTime(1046.50, now); // C6
+          osc3.type = 'sine';
+          osc3.frequency.setValueAtTime(2093.00, now); // C7 high crystal sparkle
+
+          gain.gain.setValueAtTime(0, now);
+          gain.gain.linearRampToValueAtTime(0.32 * volMultiplier, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+
+          osc1.connect(gain);
+          osc2.connect(gain);
+          osc3.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc1.start(now);
+          osc2.start(now);
+          osc3.start(now);
+          osc1.stop(now + 0.8);
+          osc2.stop(now + 0.8);
+          osc3.stop(now + 0.8);
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  // Sequence tone with high clarity / high sound synthesis
+  playSequenceTone(index: number, options?: { volume?: number; highBoost?: boolean }) {
+    this.playRhythmInstrumentTone(index, {
+      volume: options?.volume,
+      highBoost: options?.highBoost ?? true
+    });
   }
 }
 

@@ -57,6 +57,7 @@ export type ReminderType =
 
 export type RecurrenceType = 'once' | 'daily' | 'weekdays' | 'weekly' | 'custom' | string;
 export type ReminderPriority = 'low' | 'medium' | 'high' | 'gentle' | 'critical' | string;
+export type MedicationStatus = 'upcoming' | 'due' | 'taken' | 'missed';
 
 export interface Reminder {
   id: string;
@@ -77,6 +78,19 @@ export interface Reminder {
   completed: boolean;
   completed_at?: string | null;
   created_at: string;
+
+  // Medication Management System (MMS) fields
+  is_caregiver_scheduled?: boolean;
+  caregiver_id?: string;
+  caregiver_name?: string;
+  medication_name?: string;
+  frequency?: string;
+  scheduled_times?: string[];
+  status?: MedicationStatus;
+  source?: 'caregiver' | 'patient' | 'system';
+  acknowledged_at?: string | null;
+  followup_sent?: boolean;
+  missed_notified?: boolean;
 }
 
 export interface FamiliarPerson {
@@ -283,10 +297,15 @@ export interface AIRecommendation {
 export interface CulturalItem {
   id: string;
   name: Record<RegionalLanguage, string>;
-  category: 'fruit' | 'animal' | 'festival' | 'craft' | 'monument' | 'attire';
+  category: 'fruit' | 'animal' | 'festival' | 'craft' | 'monument' | 'attire' | 'tea' | 'lake';
   image_url: string;
-  state_origin: string; // Assam, Meghalaya, Manipur, Nagaland, etc.
+  state_origin: string; // Assam, Meghalaya, Manipur, Nagaland, Arunachal Pradesh, Tripura, Mizoram, Sikkim
+  state_native_name?: string;
   description: Record<RegionalLanguage, string>;
+  clue?: Record<RegionalLanguage, string>;
+  fun_fact?: Record<RegionalLanguage, string>;
+  icon?: string;
+  pronunciation_hint?: string;
 }
 
 // -------------------------------------------------------------

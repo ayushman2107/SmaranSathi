@@ -172,14 +172,28 @@ export const ReminderNotificationModal: React.FC<ReminderNotificationModalProps>
           <div>
             <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-xs font-black uppercase tracking-wider mb-1">
               <Clock className="w-3.5 h-3.5 text-amber-700" />
-              <span>Routine Reminder · {reminder.time}</span>
+              <span>{reminder.is_caregiver_scheduled ? 'Caregiver-Scheduled Routine' : 'Routine Reminder'} · {reminder.time}</span>
             </div>
             <h2 
               id="reminder-modal-title"
               className="text-2xl sm:text-3xl font-black text-gray-950 leading-tight"
             >
-              {reminder.title}
+              {reminder.medication_name || reminder.title}
             </h2>
+
+            {reminder.dosage && (
+              <div className="mt-1 inline-block">
+                <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-200 text-xs font-black">
+                  💊 Dosage: {reminder.dosage}
+                </span>
+              </div>
+            )}
+
+            {reminder.is_caregiver_scheduled && (
+              <p className="text-xs text-teal-800 font-bold mt-1">
+                👨‍⚕️ Prescribed by: <span className="text-teal-950">{reminder.caregiver_name || reminder.created_by || 'Caregiver'}</span>
+              </p>
+            )}
           </div>
         </div>
 
