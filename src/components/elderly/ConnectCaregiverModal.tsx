@@ -9,7 +9,8 @@ import {
   CheckCircle2, 
   Users, 
   HelpCircle,
-  KeyRound
+  KeyRound,
+  X
 } from 'lucide-react';
 import { soundEffects, speakText } from '../../utils/speechAndAudio';
 import { 
@@ -115,26 +116,34 @@ export const ConnectCaregiverModal: React.FC<ConnectCaregiverModalProps> = ({
           const data = await res.json();
           if (res.ok && data.success && data.user) {
             soundEffects.playSuccessChime();
-            setSuccessMsg(data.message || 'Connected successfully to Caregiver in Firebase!');
+            setSuccessMsg(data.message || 'Connected successfully to Caregiver!');
             saveRememberedUser(data.user);
             setTimeout(() => {
               onConnected(data.user);
             }, 800);
             return;
+          } else {
+            setErrorMsg(data.error || 'Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.');
+            soundEffects.playGentleEncouragement();
+            setIsSubmitting(false);
+            return;
           }
-        } catch {}
+        } catch {
+          setErrorMsg('Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.');
+          soundEffects.playGentleEncouragement();
+          setIsSubmitting(false);
+          return;
+        }
       }
 
-      // If matched caregiver identified:
-      const effectiveCaregiver: User = matchedCaregiver || {
-        id: `caregiver-${code.toLowerCase()}`,
-        name: `Caregiver (${code})`,
-        role: 'caregiver',
-        caregiver_code: code,
-        language_pref: 'en',
-        pin: '0000',
-        created_at: new Date().toISOString()
-      };
+      if (!matchedCaregiver) {
+        setErrorMsg('Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.');
+        soundEffects.playGentleEncouragement();
+        setIsSubmitting(false);
+        return;
+      }
+
+      const effectiveCaregiver: User = matchedCaregiver;
 
       // 2. Link in Firebase Firestore
       const updatedUser = await linkElderlyToCaregiverInFirebase(elderlyUser.id, effectiveCaregiver);
@@ -187,6 +196,19 @@ export const ConnectCaregiverModal: React.FC<ConnectCaregiverModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-950/75 backdrop-blur-md animate-fade-in">
       <div className="w-full max-w-xl bg-white rounded-[36px] p-6 sm:p-8 border-4 border-amber-300 shadow-[0_16px_0_0_#FDE047] space-y-6 relative max-h-[92vh] overflow-y-auto">
         
+        {/* Close / Cross Button */}
+        <button
+          type="button"
+          onClick={() => {
+            soundEffects.playGentleTap();
+            onConnected(elderlyUser);
+          }}
+          className="absolute top-5 right-5 w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+          title="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
         {/* Header Badge */}
         <div className="text-center space-y-3">
           <div className="w-20 h-20 mx-auto rounded-3xl bg-amber-100 flex items-center justify-center text-amber-800 border-4 border-amber-300 shadow-md">
@@ -236,8 +258,22 @@ export const ConnectCaregiverModal: React.FC<ConnectCaregiverModalProps> = ({
                   setErrorMsg('');
                 }}
                 placeholder="Type Caregiver ID (e.g. CG-101)"
-                className="w-full min-h-[58px] pl-12 pr-4 text-lg font-black tracking-wider bg-orange-50/70 border-3 border-orange-200 focus:border-amber-500 focus:bg-white rounded-2xl outline-none transition-all placeholder:text-gray-400 placeholder:font-normal placeholder:tracking-normal uppercase"
+                className="w-full min-h-[58px] pl-12 pr-12 text-lg font-black tracking-wider bg-orange-50/70 border-3 border-orange-200 focus:border-amber-500 focus:bg-white rounded-2xl outline-none transition-all placeholder:text-gray-400 placeholder:font-normal placeholder:tracking-normal uppercase"
               />
+              {caregiverCode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCaregiverCode('');
+                    setErrorMsg('');
+                    soundEffects.playGentleTap();
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-700 transition-colors cursor-pointer"
+                  title="Clear input"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 

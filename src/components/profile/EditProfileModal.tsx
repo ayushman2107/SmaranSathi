@@ -125,7 +125,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   // Handle assigning caregiver code
   const handleAssignCaregiver = async () => {
     if (!caregiverInputCode.trim()) {
-      setCaregiverStatusMsg('Please enter a Caregiver ID (e.g. CG-2125).');
+      setCaregiverStatusMsg('Please enter a Caregiver ID (e.g. CG-101).');
       return;
     }
     setIsVerifyingCaregiver(true);
@@ -140,20 +140,13 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         setCaregiverInputCode('');
         soundEffects.playSuccessChime();
       } else {
-        // Allow manual code assignment if caregiver will sign up later
-        const code = caregiverInputCode.trim().toUpperCase();
-        setConnectedCaregiverId(code);
-        setConnectedCaregiverName('Assigned Caregiver');
-        setCaregiverStatusMsg(`Code ${code} saved as your assigned caregiver. Save profile to confirm.`);
-        setIsChangingCaregiver(false);
-        setCaregiverInputCode('');
-        soundEffects.playGentleTap();
+        setCaregiverStatusMsg('Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.');
+        soundEffects.playGentleEncouragement();
       }
     } catch (e) {
       console.warn('Error looking up caregiver:', e);
-      setConnectedCaregiverId(caregiverInputCode.trim().toUpperCase());
-      setConnectedCaregiverName('Assigned Caregiver');
-      setIsChangingCaregiver(false);
+      setCaregiverStatusMsg('Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.');
+      soundEffects.playGentleEncouragement();
     } finally {
       setIsVerifyingCaregiver(false);
     }

@@ -1543,18 +1543,9 @@ app.post('/api/caregivers/link', (req: Request, res: Response) => {
      u.phone === codeQuery)
   );
 
-  // If no caregiver exists with this ID yet, create one so the elderly is linked immediately
+  // STRICT REQUIREMENT: Only registered valid caregiver IDs can be assigned!
   if (!matchedCaregiver) {
-    matchedCaregiver = {
-      id: `caregiver-${Date.now()}`,
-      name: codeQuery.startsWith('CG-') ? `Caregiver (${codeQuery})` : `Caregiver ${codeQuery}`,
-      role: 'caregiver',
-      caregiver_code: codeQuery.startsWith('CG-') ? codeQuery : `CG-${codeQuery.replace(/\s+/g, '')}`,
-      language_pref: elderly.language_pref || 'en',
-      pin: '1234',
-      created_at: new Date().toISOString(),
-    };
-    users.push(matchedCaregiver);
+    return res.status(404).json({ error: 'Invalid Caregiver ID. Only registered and valid Caregiver IDs can be assigned.' });
   }
 
   // Update elderly profile

@@ -370,14 +370,40 @@ export const FaceMatchGame: React.FC<FaceMatchGameProps> = ({
           </div>
         </div>
 
-        <div className="space-y-0.5">
-          <h3 className="text-lg sm:text-xl font-black text-slate-900">
-            यह आपके परिवार के कौन से सदस्य हैं?
-          </h3>
+        <div className="space-y-1">
+          <div className="flex items-center justify-center gap-2">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900">
+              यह आपके परिवार के कौन से सदस्य हैं?
+            </h3>
+            {familiarPeople.some((p) => p.id === currentPerson.id) && (
+              <span className="px-2.5 py-0.5 bg-rose-100 text-rose-800 rounded-full font-black text-[11px] shadow-2xs">
+                ❤️ Caregiver Added
+              </span>
+            )}
+          </div>
           <p className="text-slate-500 font-bold text-xs sm:text-sm">
             पहचानने के लिए नीचे सही नाम पर टैप करें
           </p>
         </div>
+
+        {/* Family Details & Memory Notes added by Caregiver */}
+        {(currentPerson.notes || currentPerson.relation) && (
+          <div className="bg-amber-50 border-2 border-amber-200/80 rounded-2xl p-3.5 max-w-md mx-auto text-left space-y-1 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-amber-900 uppercase tracking-wide flex items-center gap-1">
+                <span>📖 Family Memory Details</span>
+              </span>
+              <span className="text-xs font-bold text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full">
+                {currentPerson.relation}
+              </span>
+            </div>
+            {currentPerson.notes && (
+              <p className="text-sm font-medium text-amber-950 pt-0.5">
+                {currentPerson.notes}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Options */}
         <div className={`grid gap-2.5 pt-1 ${options.length > 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-md mx-auto'}`}>
