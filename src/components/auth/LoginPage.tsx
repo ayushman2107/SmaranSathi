@@ -392,14 +392,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   const handleElderlyPhoneChange = (val: string) => {
-    const clean = val.replace(/[^\d+ ]/g, '');
+    const clean = val.replace(/\D/g, '').slice(0, 10);
     setElderlyPhone(clean);
     setErrorMessage('');
     verifyPhoneUniqueness(clean, 'elderly');
   };
 
   const handleCaregiverPhoneChange = (val: string) => {
-    const clean = val.replace(/[^\d+ ]/g, '');
+    const clean = val.replace(/\D/g, '').slice(0, 10);
     setCaregiverPhone(clean);
     setErrorMessage('');
     verifyPhoneUniqueness(clean, 'caregiver');
@@ -687,7 +687,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       // Strict Phone Number Validation and Uniqueness Check
       const cleanElderlyPhone = normalizePhoneNumber(elderlyPhone);
-      if (!elderlyPhone.trim() || cleanElderlyPhone.length < 10) {
+      if (!elderlyPhone.trim() || cleanElderlyPhone.length !== 10) {
         setErrorMessage('Please enter a valid 10-digit mobile phone number for registration.');
         setLoading(false);
         soundEffects.playGentleEncouragement();
@@ -803,7 +803,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       // Strict Phone Number Validation and Uniqueness Check
       const cleanCaregiverPhone = normalizePhoneNumber(caregiverPhone);
-      if (!caregiverPhone.trim() || cleanCaregiverPhone.length < 10) {
+      if (!caregiverPhone.trim() || cleanCaregiverPhone.length !== 10) {
         setErrorMessage('Please enter a valid 10-digit mobile phone number for registration.');
         setLoading(false);
         soundEffects.playGentleEncouragement();
@@ -1319,7 +1319,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       value={elderlyPhone}
                       onChange={(e) => handleElderlyPhoneChange(e.target.value)}
                       placeholder={t.phone_placeholder}
-                      maxLength={14}
+                      maxLength={10}
                       className={`w-full min-h-[50px] pl-16 pr-10 text-base font-bold bg-white text-[#1E293B] border-2 rounded-xl outline-none shadow-2xs transition-all ${
                         elderlyPhoneDuplicate
                           ? 'border-rose-400 bg-rose-50/40 focus:border-rose-500'
@@ -1749,7 +1749,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       value={caregiverPhone}
                       onChange={(e) => handleCaregiverPhoneChange(e.target.value)}
                       placeholder={t.phone_placeholder}
-                      maxLength={14}
+                      maxLength={10}
                       className={`w-full min-h-[50px] pl-16 pr-10 text-base font-bold bg-white text-[#1E293B] border-2 rounded-xl outline-none shadow-2xs transition-all ${
                         caregiverPhoneDuplicate
                           ? 'border-rose-400 bg-rose-50/40 focus:border-rose-500'
