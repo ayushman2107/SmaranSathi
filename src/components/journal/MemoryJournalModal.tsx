@@ -36,6 +36,7 @@ import {
 import { MemoryJournalEntry, RegionalLanguage, User } from '../../types';
 import { soundEffects } from '../../utils/soundEffects';
 import { downloadPhoto } from '../../utils/downloadPhoto';
+import { downloadAudio, downloadMemoryNarrationWav } from '../../utils/downloadAudio';
 import { autoDetectLocation } from '../../utils/locationDetector';
 import { 
   getJournalsForRelationship, 
@@ -108,6 +109,77 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [activeAudioPlayingId, setActiveAudioPlayingId] = useState<string | null>(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+
+  // Audio Download states
+  const [downloadingAudioId, setDownloadingAudioId] = useState<string | null>(null);
+  const [audioDownloadNotice, setAudioDownloadNotice] = useState<string | null>(null);
+
+  const showDownloadNotice = (msg: string) => {
+    setAudioDownloadNotice(msg);
+    setTimeout(() => {
+      setAudioDownloadNotice(null);
+    }, 4000);
+  };
+
+  // Download recorded voice audio file
+  const handleDownloadRecordedAudio = async (audioUrl: string, entryTitle: string, itemId?: string) => {
+    if (!audioUrl) return;
+    const targetId = itemId || 'new-preview';
+    setDownloadingAudioId(targetId);
+    soundEffects.playGentleTap(540);
+
+    try {
+      const sanitizedTitle = (entryTitle || 'memory-voice')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gi, '-')
+        .substring(0, 30);
+      const filename = `smaran-sathi-memory-${sanitizedTitle}.webm`;
+      
+      const success = await downloadAudio(audioUrl, filename);
+      if (success) {
+        soundEffects.playSuccessChime();
+        showDownloadNotice(`Downloaded voice audio: ${filename}`);
+      }
+    } catch (e) {
+      console.warn('Audio download failed:', e);
+    } finally {
+      setDownloadingAudioId(null);
+    }
+  };
+
+  // Download either recorded voice audio or synthesized spoken keepsake audio for any memory entry
+  const handleDownloadMemoryAudio = async (item: MemoryJournalEntry) => {
+    setDownloadingAudioId(item.id);
+    soundEffects.playGentleTap(540);
+
+    try {
+      const sanitizedTitle = (item.title || 'memory-audio')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gi, '-')
+        .substring(0, 30);
+
+      if (item.media_type === 'audio' || item.media_url?.startsWith('data:audio') || item.media_url?.includes('.mp3') || item.media_url?.includes('.webm') || item.media_url?.includes('.wav')) {
+        const filename = `memory-voice-${sanitizedTitle}.webm`;
+        const success = await downloadAudio(item.media_url!, filename);
+        if (success) {
+          soundEffects.playSuccessChime();
+          showDownloadNotice(`Downloaded recorded voice audio: ${filename}`);
+        }
+      } else {
+        // Text-based memory narration audio keepsake download
+        const filename = `memory-story-${sanitizedTitle}.wav`;
+        const success = await downloadMemoryNarrationWav(item.title, item.content, item.created_by_name, filename);
+        if (success) {
+          soundEffects.playSuccessChime();
+          showDownloadNotice(`Downloaded memory audio keepsake: ${filename}`);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to download memory audio:', e);
+    } finally {
+      setDownloadingAudioId(null);
+    }
+  };
 
   // Auto-activate voice writing mode if initialAudioMode is requested
   useEffect(() => {
@@ -884,6 +956,23 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
           </button>
         </div>
 
+        {/* Download Feedback Notice Banner */}
+        {audioDownloadNotice && (
+          <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-2.5 flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2 text-xs font-black text-emerald-900">
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>{audioDownloadNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAudioDownloadNotice(null)}
+              className="text-emerald-700 hover:text-emerald-900 text-xs font-black cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Verified Assignment Relationship Banner */}
         <div className="px-6 py-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between flex-wrap gap-2">
           {relationshipInfo.loading ? (
@@ -1190,26 +1279,49 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                         </div>
                       </div>
 
-                      {/* AI Voice-to-Text Button */}
-                      <button
-                        type="button"
-                        onClick={handleTranscribeRecordedAudio}
-                        disabled={isTranscribing}
-                        className="px-3.5 py-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition-all disabled:opacity-60"
-                        title="Transcribe spoken voice to written memory story"
-                      >
-                        {isTranscribing ? (
-                          <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            <span>Transcribing with AI...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                            <span>✨ Transcribe Voice to Written Story</span>
-                          </>
-                        )}
-                      </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Download Voice Audio File */}
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadRecordedAudio(recordedAudioUrl || mediaUrl, title || 'voice-memory', 'new-preview')}
+                          disabled={downloadingAudioId === 'new-preview'}
+                          className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all disabled:opacity-50"
+                          title="Download voice recording file (.webm)"
+                        >
+                          {downloadingAudioId === 'new-preview' ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-700" />
+                              <span>Saving...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3.5 h-3.5 text-amber-800" />
+                              <span>Download Audio</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* AI Voice-to-Text Button */}
+                        <button
+                          type="button"
+                          onClick={handleTranscribeRecordedAudio}
+                          disabled={isTranscribing}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition-all disabled:opacity-60"
+                          title="Transcribe spoken voice to written memory story"
+                        >
+                          {isTranscribing ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Transcribing with AI...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                              <span>✨ Transcribe Voice to Written Story</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1475,18 +1587,40 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                           </div>
                         </div>
 
-                        {activeAudioPlayingId === item.id && (
-                          <div className="flex items-center gap-1 h-5 px-2">
-                            <span className="w-1 bg-amber-700 rounded-full animate-pulse h-3" />
-                            <span className="w-1 bg-amber-600 rounded-full animate-pulse h-5" />
-                            <span className="w-1 bg-amber-700 rounded-full animate-pulse h-2" />
-                            <span className="w-1 bg-amber-600 rounded-full animate-pulse h-4" />
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {activeAudioPlayingId === item.id && (
+                            <div className="flex items-center gap-1 h-5 px-2">
+                              <span className="w-1 bg-amber-700 rounded-full animate-pulse h-3" />
+                              <span className="w-1 bg-amber-600 rounded-full animate-pulse h-5" />
+                              <span className="w-1 bg-amber-700 rounded-full animate-pulse h-2" />
+                              <span className="w-1 bg-amber-600 rounded-full animate-pulse h-4" />
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadRecordedAudio(item.media_url!, item.title, item.id)}
+                            disabled={downloadingAudioId === item.id}
+                            className="px-2.5 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black flex items-center gap-1 shadow-2xs cursor-pointer transition-all active:scale-95 shrink-0 disabled:opacity-60"
+                            title="Download original voice recording audio file"
+                          >
+                            {downloadingAudioId === item.id ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Saving...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download Voice Audio</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     )}
 
-                    {/* Audio Playback Controls */}
+                    {/* Audio Playback & Download Controls */}
                     <div className="pt-2 flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => handlePlayVoice(item)}
@@ -1505,6 +1639,31 @@ export const MemoryJournalModal: React.FC<MemoryJournalModalProps> = ({
                           <>
                             <Volume2 className="w-3.5 h-3.5 text-amber-700" />
                             <span>Read Story Aloud (TTS)</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Download Audio Option */}
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadMemoryAudio(item)}
+                        disabled={downloadingAudioId === item.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs transition-all cursor-pointer disabled:opacity-60"
+                        title={
+                          item.media_type === 'audio' || item.media_url?.startsWith('data:audio')
+                            ? 'Download recorded voice audio file (.webm)'
+                            : 'Download spoken story audio keepsake (.wav)'
+                        }
+                      >
+                        {downloadingAudioId === item.id ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-700" />
+                            <span>Downloading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Download Audio</span>
                           </>
                         )}
                       </button>

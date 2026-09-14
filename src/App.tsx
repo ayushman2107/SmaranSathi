@@ -12,7 +12,8 @@ import {
   LevelFinishResult,
   UIUXSettings,
   UILayoutMode,
-  UIThemePalette
+  UIThemePalette,
+  ConsultationAppointment
 } from './types';
 import { Header } from './components/common/Header';
 import { FloatingSOSButton } from './components/common/FloatingSOSButton';
@@ -33,6 +34,7 @@ import { LoginPage } from './components/auth/LoginPage';
 import { FAMILIAR_PEOPLE_SEED } from './data/nerContent';
 import { MemoryJournalModal } from './components/journal/MemoryJournalModal';
 import { ReminderNotificationModal } from './components/reminders/ReminderNotificationModal';
+import { PatientWelcomeHindiModal } from './components/elderly/PatientWelcomeHindiModal';
 import { ConnectCaregiverModal } from './components/elderly/ConnectCaregiverModal';
 import { EditProfileModal } from './components/profile/EditProfileModal';
 import { CaregiverSOSAlertModal } from './components/caregiver/CaregiverSOSAlertModal';
@@ -70,6 +72,8 @@ import {
   resolveAlertInFirebase,
   subscribeToCaregiverAlerts,
   subscribeToPatientGameSessions,
+  getAppointmentsForUser,
+  subscribeToAppointmentsForUser,
   logOutFirebaseUser
 } from './lib/firebase';
 
@@ -193,6 +197,7 @@ export default function App() {
   // Core Data
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [appointments, setAppointments] = useState<ConsultationAppointment[]>([]);
   const [familiarPeople, setFamiliarPeople] = useState<FamiliarPerson[]>(FAMILIAR_PEOPLE_SEED);
   const [recommendation, setRecommendation] = useState<AIRecommendation | null>(null);
   const [trendData, setTrendData] = useState<any>(null);
@@ -200,6 +205,7 @@ export default function App() {
   // Time-Based Audible Reminder Alert System
   const [activeAlarmReminder, setActiveAlarmReminder] = useState<Reminder | null>(null);
   const [isAlarmModalOpen, setIsAlarmModalOpen] = useState<boolean>(false);
+  const [showPatientWelcomeModal, setShowPatientWelcomeModal] = useState<boolean>(false);
   const triggeredKeysRef = useRef<Set<string>>(new Set());
 
   // Continuous background checker to sound alarms when reminder times arrive
@@ -373,6 +379,24 @@ export default function App() {
         const clientTrends = computeClientSideTrends(combinedSessions);
         setTrendData(clientTrends);
       }
+
+      // 7. Fetch Consultation Appointments from Firebase & Backend
+      try {
+        const fbAppointments = await getAppointmentsForUser(userId);
+        if (fbAppointments && fbAppointments.length > 0) {
+          setAppointments(fbAppointments);
+        } else {
+          const aptRes = await fetch(`/api/consultations/appointments/${userId}`);
+          if (aptRes.ok) {
+            const data = await aptRes.json();
+            if (data.appointments) {
+              setAppointments(data.appointments);
+            }
+          }
+        }
+      } catch (aptErr) {
+        console.warn('Could not fetch appointments for patient:', aptErr);
+      }
     } catch (e) {
       console.warn('Backend/Firebase load error, using robust in-memory state', e);
     }
@@ -517,6 +541,21 @@ export default function App() {
     return () => unsubscribe();
   }, [currentUser?.id, currentUser?.role, assignedPatientIds, selectedPatientId]);
 
+  // Real-time appointment listener for Patient & Caregiver
+  useEffect(() => {
+    if (!currentUser) return;
+    const targetUserId = currentUser.role === 'elderly' ? currentUser.id : selectedPatientId;
+    if (!targetUserId) return;
+
+    const unsubscribe = subscribeToAppointmentsForUser(targetUserId, (updatedAppointments) => {
+      if (updatedAppointments) {
+        setAppointments(updatedAppointments);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentUser?.id, currentUser?.role, selectedPatientId]);
+
   // Handle Login & Session Remembering
   const handleLogin = (user: User) => {
     saveRememberedUser(user);
@@ -534,6 +573,7 @@ export default function App() {
     });
 
     if (user.role === 'elderly') {
+      setShowPatientWelcomeModal(true);
       loadPatientData(user.id);
       if (!user.connected_caregiver_id) {
         setIsConnectCaregiverOpen(true);
@@ -1291,6 +1331,7 @@ export default function App() {
               user={currentUser}
               language={currentLanguage}
               reminders={reminders}
+              appointments={appointments}
               recommendation={recommendation}
               assignedCaregiverName={assignedCaregiverName}
               assignedCaregiverCode={assignedCaregiverCode}
@@ -1307,6 +1348,7 @@ export default function App() {
               onToggleReminder={handleToggleReminder}
               onTriggerAlarm={handleTriggerManualAlarm}
               onRefreshRecommendation={handleRefreshRecommendation}
+              onOpenHindiWelcome={() => setShowPatientWelcomeModal(true)}
             />
           )
         ) : (
@@ -1337,9 +1379,25 @@ export default function App() {
             onTriggerAlarm={handleTriggerManualAlarm}
             trendData={trendData}
             onRefreshRecommendation={handleRefreshRecommendation}
+            onAppointmentBooked={(newApt) => {
+              setAppointments((prev) => [newApt, ...prev.filter((a) => a.id !== newApt.id)]);
+              if (selectedPatientId) {
+                loadPatientData(selectedPatientId);
+              }
+            }}
           />
         )}
       </main>
+
+      {/* Patient Welcome Hindi Modal (15s auto-close countdown with live progress bar) */}
+      {currentUser && isElderly && (
+        <PatientWelcomeHindiModal
+          patient={currentUser}
+          isOpen={showPatientWelcomeModal}
+          onClose={() => setShowPatientWelcomeModal(false)}
+          durationSeconds={15}
+        />
+      )}
 
       {/* Elderly Connect to Specific Caregiver ID Modal */}
       {currentUser && isElderly && (

@@ -17,13 +17,15 @@ import {
 } from 'lucide-react';
 import { ConsultationDoctor, ConsultationAppointment, User as PatientUser, RegionalLanguage } from '../../types';
 import { soundEffects } from '../../utils/soundEffects';
+import { saveAppointmentToFirebase, saveReminderToFirebase } from '../../lib/firebase';
 
 interface ConsultationPortalViewProps {
   user: PatientUser;
   language?: RegionalLanguage;
+  onAppointmentBooked?: (appointment: ConsultationAppointment, reminder?: any) => void;
 }
 
-export const ConsultationPortalView: React.FC<ConsultationPortalViewProps> = ({ user, language = 'en' }) => {
+export const ConsultationPortalView: React.FC<ConsultationPortalViewProps> = ({ user, language = 'en', onAppointmentBooked }) => {
   const [doctors, setDoctors] = useState<ConsultationDoctor[]>([]);
   const [appointments, setAppointments] = useState<ConsultationAppointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,6 +88,15 @@ export const ConsultationPortalView: React.FC<ConsultationPortalViewProps> = ({ 
         const data = await res.json();
         setAppointments((prev) => [data.appointment, ...prev]);
         setBookingSuccess(true);
+        if (data.appointment) {
+          saveAppointmentToFirebase(data.appointment).catch(() => {});
+        }
+        if (data.reminder) {
+          saveReminderToFirebase(data.reminder).catch(() => {});
+        }
+        if (onAppointmentBooked) {
+          onAppointmentBooked(data.appointment, data.reminder);
+        }
         setTimeout(() => setBookingSuccess(false), 4000);
       }
     } catch (err) {

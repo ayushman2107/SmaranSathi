@@ -20,6 +20,7 @@ class AudioService {
 
   // Gentle pentatonic success chime (warm sine wave, smooth envelope)
   playSuccessChime() {
+    if (isVoiceMuted()) return;
     try {
       const ctx = this.getAudioContext();
       if (!ctx) return;
@@ -51,6 +52,7 @@ class AudioService {
 
   // Gentle soft pop for tap or selection
   playGentleTap(freq = 440) {
+    if (isVoiceMuted()) return;
     try {
       const ctx = this.getAudioContext();
       if (!ctx) return;
@@ -76,6 +78,7 @@ class AudioService {
 
   // Gentle chime for reminder announcement
   playGentleChime(freq?: number) {
+    if (isVoiceMuted()) return;
     if (freq) {
       this.playGentleTap(freq);
     } else {
@@ -85,6 +88,7 @@ class AudioService {
 
   // Melodic, resonant multi-tone alarm for scheduled reminders
   playReminderAlarm(priority: 'high' | 'medium' | 'gentle' = 'medium') {
+    if (isVoiceMuted()) return;
     try {
       const ctx = this.getAudioContext();
       if (!ctx) return;
@@ -129,6 +133,7 @@ class AudioService {
 
   // Encouraging warm tone (never harsh, soft wobble)
   playGentleEncouragement() {
+    if (isVoiceMuted()) return;
     try {
       const ctx = this.getAudioContext();
       if (!ctx) return;
@@ -158,6 +163,7 @@ class AudioService {
 
   // High sound / High-clarity instrument-specific rhythm tones
   playRhythmInstrumentTone(index: number, options?: { volume?: number; highBoost?: boolean }) {
+    if (isVoiceMuted()) return;
     try {
       const ctx = this.getAudioContext();
       if (!ctx) return;
@@ -298,10 +304,19 @@ class AudioService {
 
   // Sequence tone with high clarity / high sound synthesis
   playSequenceTone(index: number, options?: { volume?: number; highBoost?: boolean }) {
+    if (isVoiceMuted()) return;
     this.playRhythmInstrumentTone(index, {
       volume: options?.volume,
       highBoost: options?.highBoost ?? true
     });
+  }
+
+  stopAll() {
+    if (this.audioCtx && this.audioCtx.state === 'running') {
+      try {
+        this.audioCtx.suspend().catch(() => {});
+      } catch {}
+    }
   }
 }
 
@@ -454,6 +469,7 @@ export function setVoiceMuted(muted: boolean): void {
     } catch {}
     if (muted) {
       stopSpeaking();
+      soundEffects.stopAll();
     }
   }
   muteSubscribers.forEach((cb) => {

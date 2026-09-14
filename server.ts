@@ -108,6 +108,10 @@ const DEFAULT_DEMO_USERS: User[] = [
     pin: '1234',
     age: 72,
     location: 'Guwahati, Assam',
+    department: 'न्यूरोलॉजी एवं स्मृति विभाग (Neurology & Memory Care)',
+    branch: 'गुवाहाटी एम्स शाखा (AIIMS Guwahati Branch)',
+    city: 'गुवाहाटी (Guwahati)',
+    occupation: 'सेवानिवृत्त वन अधिकारी (Retired Forest Officer)',
     diagnosis_note: 'Mild memory assistance requested.',
     location_sharing: false,
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80',
@@ -124,6 +128,10 @@ const DEFAULT_DEMO_USERS: User[] = [
     pin: '1234',
     age: 35,
     location: 'Guwahati, Assam',
+    department: 'वरिष्ठ चिकित्सा एवं न्यूरोलॉजी विभाग',
+    branch: 'गुवाहाटी मुख्य अस्पताल',
+    city: 'गुवाहाटी',
+    occupation: 'जेरियाट्रिक न्यूरोलॉजिस्ट (Geriatric Neurologist)',
     diagnosis_note: 'Certified Family & Clinical Caregiver',
     location_sharing: false,
     avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
@@ -134,10 +142,14 @@ const DEFAULT_DEMO_USERS: User[] = [
     patient_id: 'PT-202',
     name: 'Hemanta Phukan',
     role: 'elderly',
-    language_pref: 'en',
+    language_pref: 'hi',
     pin: '1234',
     age: 72,
     location: 'Jorhat, Assam',
+    department: 'वृद्धावस्था कल्याण एवं संज्ञानात्मक स्वास्थ्य विभाग',
+    branch: 'जोरहाट मेडिकल कॉलेज शाखा (JMCH Branch)',
+    city: 'जोरहाट (Jorhat)',
+    occupation: 'सेवानिवृत्त शिक्षक (Retired School Teacher)',
     diagnosis_note: 'Mild memory assistance requested.',
     location_sharing: false,
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80',
@@ -154,10 +166,34 @@ const DEFAULT_DEMO_USERS: User[] = [
     pin: '1234',
     age: 35,
     location: 'Jorhat, Assam',
+    department: 'देखभाल एवं परामर्श सेवा',
+    branch: 'जोरहाट स्वास्थ्य केंद्र',
+    city: 'जोरहाट',
+    occupation: 'क्लिनिकल केयरगिवर (Clinical Caregiver)',
     diagnosis_note: 'Certified Family & Clinical Caregiver',
     location_sharing: false,
     avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
     created_at: '2026-09-14T15:03:05.687Z'
+  },
+  {
+    id: 'patient_C',
+    patient_id: 'PT-303',
+    name: 'रमेश चंद्र वर्मा (Ramesh Verma)',
+    role: 'elderly',
+    language_pref: 'hi',
+    pin: '1234',
+    age: 74,
+    location: 'शिलांग (Shillong)',
+    department: 'न्यूरो-साइकेट्री एवं स्मृति केंद्र (Neuro-Psychiatry)',
+    branch: 'पूर्वोत्तर क्षेत्रीय स्वास्थ्य संस्थान (NEIGRIHMS Branch)',
+    city: 'शिलांग (Shillong)',
+    occupation: 'सेवानिवृत्त रेलवे अधिकारी (Retired Railway Officer)',
+    diagnosis_note: 'Cognitive memory wellness monitoring.',
+    location_sharing: false,
+    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=250&q=80',
+    created_at: '2026-09-14T15:03:05.700Z',
+    connected_caregiver_id: 'CG-101',
+    connected_caregiver_name: 'Dr. Ananya'
   }
 ];
 
@@ -661,20 +697,51 @@ let consultationDoctors: ConsultationDoctor[] = [
   }
 ];
 
-let consultationAppointments: ConsultationAppointment[] = [
-  {
-    id: 'apt-1',
-    user_id: 'user-bhaben',
-    doctor_id: 'doc-1',
-    doctor_name: 'Dr. Bhupen Borah, MD, DM',
-    specialty: 'Senior Consultant Neurologist',
-    hospital: 'GNRC Hospitals, Guwahati',
-    date: '2026-09-18',
-    time: '03:30 PM',
-    status: 'confirmed',
-    notes: 'Bi-monthly cognitive evaluation and review of sequence recall engagement trend.'
+const APPOINTMENTS_FILE = path.join(DATA_DIR, 'consultation_appointments_store.json');
+
+function loadConsultationAppointmentsFromDisk(): ConsultationAppointment[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(APPOINTMENTS_FILE)) {
+      const raw = fs.readFileSync(APPOINTMENTS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load consultation appointments from disk:', err);
   }
-];
+  return [
+    {
+      id: 'apt-1',
+      user_id: 'user-bhaben',
+      doctor_id: 'doc-1',
+      doctor_name: 'Dr. Bhupen Borah, MD, DM',
+      specialty: 'Senior Consultant Neurologist',
+      hospital: 'GNRC Hospitals, Guwahati',
+      date: '2026-09-18',
+      time: '03:30 PM',
+      status: 'confirmed',
+      notes: 'Bi-monthly cognitive evaluation and review of sequence recall engagement trend.'
+    }
+  ];
+}
+
+function saveConsultationAppointmentsToDisk(list: ConsultationAppointment[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(APPOINTMENTS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Could not write consultation appointments to disk:', err);
+  }
+}
+
+let consultationAppointments: ConsultationAppointment[] = loadConsultationAppointmentsFromDisk();
 
 let forumPosts: ForumPost[] = [
   {
@@ -2442,7 +2509,11 @@ app.get('/api/consultations/doctors', (_req: Request, res: Response) => {
 
 app.get('/api/consultations/appointments/:userId', (req: Request, res: Response) => {
   const { userId } = req.params;
-  const list = consultationAppointments.filter(a => a.user_id === userId);
+  const user = users.find(u => u.id === userId || (u.patient_id && u.patient_id === userId));
+  const list = consultationAppointments.filter(a => 
+    a.user_id === userId || 
+    (user && (a.user_id === user.id || (user.patient_id && a.user_id === user.patient_id)))
+  );
   res.json({ appointments: list });
 });
 
@@ -2453,9 +2524,12 @@ app.post('/api/consultations/book', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Doctor not found' });
   }
 
+  const patient = users.find(u => u.id === user_id || (u.patient_id && u.patient_id === user_id));
+  const targetUserId = patient ? patient.id : user_id;
+
   const newAppointment: ConsultationAppointment = {
     id: `apt-${Date.now()}`,
-    user_id,
+    user_id: targetUserId,
     doctor_id,
     doctor_name: doctor.name,
     specialty: doctor.specialty,
@@ -2463,11 +2537,70 @@ app.post('/api/consultations/book', (req: Request, res: Response) => {
     date,
     time,
     status: 'confirmed',
-    notes: notes || 'Cognitive and routine checkup review.'
+    notes: notes || 'Cognitive checkup and routine memory consultation.'
   };
 
-  consultationAppointments.push(newAppointment);
-  res.status(201).json({ success: true, appointment: newAppointment });
+  consultationAppointments.unshift(newAppointment);
+  saveConsultationAppointmentsToDisk(consultationAppointments);
+
+  // Synchronize to reminders array so patient dashboard schedule and alarms display it
+  const matchingReminder: Reminder = {
+    id: `rem-apt-${newAppointment.id}`,
+    user_id: targetUserId,
+    type: 'appointment',
+    title: `Doctor Visit: ${doctor.name} (${doctor.specialty})`,
+    time: time || '10:00 AM',
+    scheduled_date: date,
+    recurrence: 'once',
+    instructions: `Clinic/Hospital: ${doctor.hospital}. Consultation Notes: ${newAppointment.notes}`,
+    completed: false,
+    created_by: 'Caregiver Consultation Booking',
+    created_at: new Date().toISOString(),
+    priority: 'high',
+    audio_chime: true,
+    spoken_prompt: `Doctor appointment scheduled with ${doctor.name} on ${date} at ${time}.`
+  };
+  reminders.unshift(matchingReminder);
+  saveRemindersToDisk(reminders);
+
+  // Alert caregiver and patient
+  alerts.unshift({
+    id: `alert-apt-${Date.now()}`,
+    user_id: targetUserId,
+    patient_name: patient?.name || 'Patient',
+    type: 'routine',
+    message: `Doctor Consultation Confirmed: ${doctor.name} (${doctor.specialty}) at ${doctor.hospital} on ${date} at ${time}.`,
+    timestamp: new Date().toISOString(),
+    resolved: false
+  });
+
+  res.status(201).json({ 
+    success: true, 
+    appointment: newAppointment, 
+    reminder: matchingReminder 
+  });
+});
+
+app.put('/api/consultations/appointments/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status, notes, date, time } = req.body;
+  const apt = consultationAppointments.find(a => a.id === id);
+  if (!apt) return res.status(404).json({ error: 'Appointment not found' });
+  if (status) apt.status = status;
+  if (notes) apt.notes = notes;
+  if (date) apt.date = date;
+  if (time) apt.time = time;
+  saveConsultationAppointmentsToDisk(consultationAppointments);
+  res.json({ success: true, appointment: apt });
+});
+
+app.delete('/api/consultations/appointments/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  consultationAppointments = consultationAppointments.filter(a => a.id !== id);
+  saveConsultationAppointmentsToDisk(consultationAppointments);
+  reminders = reminders.filter(r => r.id !== `rem-apt-${id}`);
+  saveRemindersToDisk(reminders);
+  res.json({ success: true, id });
 });
 
 app.get('/api/consultations/clinical-summary/:userId', (req: Request, res: Response) => {

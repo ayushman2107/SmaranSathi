@@ -33,7 +33,8 @@ import {
   MemoryJournalEntry, 
   FamiliarPerson, 
   GameSession,
-  Alert
+  Alert,
+  ConsultationAppointment
 } from '../types';
 
 // Initialize Firebase App
@@ -106,6 +107,7 @@ const JOURNALS_COLLECTION = 'journals';
 const FAMILY_COLLECTION = 'family_members';
 const SESSIONS_COLLECTION = 'game_sessions';
 const LINKS_COLLECTION = 'caregiver_links';
+const APPOINTMENTS_COLLECTION = 'consultation_appointments';
 
 // Local storage key for seamless device remembering
 const REMEMBERED_USER_KEY = 'smritisaathi_remembered_user';
@@ -1251,3 +1253,126 @@ export function subscribeToCaregiverAlerts(
     return () => {};
   }
 }
+
+// =========================================================================
+// 8. Consultation Appointments (Doctor Consultations & Appointments)
+// =========================================================================
+
+export const LOCAL_APPOINTMENTS_KEY = 'smritisaathi_cached_appointments_v1';
+
+export function getLocallySavedAppointments(userId?: string): ConsultationAppointment[] {
+  try {
+    if (typeof window === 'undefined') return [];
+    const raw = localStorage.getItem(LOCAL_APPOINTMENTS_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw) as ConsultationAppointment[];
+    if (!Array.isArray(list)) return [];
+    if (!userId) return list;
+    const cleanId = userId.trim().toLowerCase();
+    return list.filter((a) => a.user_id && a.user_id.toLowerCase() === cleanId);
+  } catch (e) {
+    console.warn('Could not read locally saved appointments:', e);
+    return [];
+  }
+}
+
+export function persistAppointmentLocally(appointment: ConsultationAppointment): void {
+  try {
+    if (typeof window === 'undefined' || !appointment || !appointment.id) return;
+    const existing = getLocallySavedAppointments();
+    const filtered = existing.filter((a) => a.id !== appointment.id);
+    const updated = [appointment, ...filtered].slice(0, 100);
+    localStorage.setItem(LOCAL_APPOINTMENTS_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('Could not persist appointment to local cache:', e);
+  }
+}
+
+export function saveLocalAppointments(appointments: ConsultationAppointment[]): void {
+  try {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(LOCAL_APPOINTMENTS_KEY, JSON.stringify(appointments));
+  } catch (e) {
+    console.warn('Could not save appointments array to local cache:', e);
+  }
+}
+
+export async function getAppointmentsForUser(userId: string): Promise<ConsultationAppointment[]> {
+  const localList = getLocallySavedAppointments(userId);
+  try {
+    if (!userId) return localList;
+    const q = query(
+      collection(db, APPOINTMENTS_COLLECTION),
+      where('user_id', '==', userId)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const remoteList = snap.docs.map((d) => d.data() as ConsultationAppointment);
+      const merged = new Map<string, ConsultationAppointment>();
+      remoteList.forEach((a) => {
+        persistAppointmentLocally(a);
+        merged.set(a.id, a);
+      });
+      localList.forEach((a) => {
+        if (!merged.has(a.id)) merged.set(a.id, a);
+      });
+      return Array.from(merged.values());
+    }
+  } catch (error) {
+    console.warn('Error getting appointments from Firebase, returning cached:', error);
+  }
+  return localList;
+}
+
+export async function saveAppointmentToFirebase(appointment: ConsultationAppointment): Promise<void> {
+  persistAppointmentLocally(appointment);
+  try {
+    const ref = doc(db, APPOINTMENTS_COLLECTION, appointment.id);
+    await setDoc(ref, cleanForFirestore(appointment), { merge: true });
+  } catch (error) {
+    console.warn('Error saving appointment to Firebase:', error);
+  }
+}
+
+export async function deleteAppointmentFromFirebase(appointmentId: string): Promise<void> {
+  try {
+    const existing = getLocallySavedAppointments();
+    const filtered = existing.filter((a) => a.id !== appointmentId);
+    saveLocalAppointments(filtered);
+    await deleteDoc(doc(db, APPOINTMENTS_COLLECTION, appointmentId));
+  } catch (error) {
+    console.warn('Error deleting appointment from Firebase:', error);
+  }
+}
+
+export function subscribeToAppointmentsForUser(
+  userId: string,
+  onAppointmentsUpdate: (appointments: ConsultationAppointment[]) => void
+): () => void {
+  try {
+    const q = query(
+      collection(db, APPOINTMENTS_COLLECTION),
+      where('user_id', '==', userId)
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const items: ConsultationAppointment[] = [];
+        snapshot.forEach((docSnap) => {
+          const apt = docSnap.data() as ConsultationAppointment;
+          items.push(apt);
+        });
+        saveLocalAppointments(items);
+        onAppointmentsUpdate(items);
+      },
+      (error) => {
+        console.warn('Appointments snapshot listener warning:', error);
+      }
+    );
+    return unsubscribe;
+  } catch (e) {
+    console.warn('Failed to subscribe to appointments snapshot:', e);
+    return () => {};
+  }
+}
+

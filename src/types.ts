@@ -32,6 +32,10 @@ export interface User {
   face_descriptor?: number[] | null;
   face_registered_at?: string | null;
   email?: string;
+  department?: string;
+  branch?: string;
+  city?: string;
+  occupation?: string;
   updated_at?: string;
 }
 

@@ -89,6 +89,7 @@ interface CaregiverDashboardProps {
   language?: RegionalLanguage;
   onLanguageChange?: (lang: RegionalLanguage) => void;
   onRefreshRecommendation?: () => Promise<any>;
+  onAppointmentBooked?: (appointment: any, reminder?: any) => void;
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
@@ -114,6 +115,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   language,
   onLanguageChange,
   onRefreshRecommendation,
+  onAppointmentBooked,
 }) => {
   const currentLang: RegionalLanguage = language || caregiverUser?.language_pref || 'en';
   const t = CAREGIVER_TRANSLATIONS[currentLang] || CAREGIVER_TRANSLATIONS.en;
@@ -824,6 +826,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
         <ConsultationPortalView
           user={currentPatient}
           language={currentLang}
+          onAppointmentBooked={onAppointmentBooked}
         />
       )}
 

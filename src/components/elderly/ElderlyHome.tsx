@@ -28,7 +28,12 @@ import {
   Layout,
   Moon,
   Sun,
-  Calculator
+  Calculator,
+  Stethoscope,
+  Building2,
+  MapPin,
+  Clock,
+  FileText
 } from 'lucide-react';
 import { 
   User, 
@@ -36,7 +41,8 @@ import {
   RegionalLanguage, 
   Reminder, 
   AIRecommendation,
-  UILayoutMode
+  UILayoutMode,
+  ConsultationAppointment
 } from '../../types';
 import { UI_TRANSLATIONS } from '../../data/nerContent';
 import { soundEffects, speakText, useVoiceMute } from '../../utils/speechAndAudio';
@@ -45,6 +51,7 @@ interface ElderlyHomeProps {
   user: User;
   language: RegionalLanguage;
   reminders: Reminder[];
+  appointments?: ConsultationAppointment[];
   recommendation: AIRecommendation | null;
   assignedCaregiverName?: string;
   assignedCaregiverCode?: string;
@@ -58,12 +65,14 @@ interface ElderlyHomeProps {
   onToggleReminder: (reminderId: string) => void;
   onTriggerAlarm?: (reminder: Reminder) => void;
   onRefreshRecommendation?: () => Promise<any>;
+  onOpenHindiWelcome?: () => void;
 }
 
 export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
   user,
   language,
   reminders,
+  appointments = [],
   recommendation,
   assignedCaregiverName,
   assignedCaregiverCode,
@@ -77,6 +86,7 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
   onToggleReminder,
   onTriggerAlarm,
   onRefreshRecommendation,
+  onOpenHindiWelcome,
 }) => {
   const t = UI_TRANSLATIONS[language] || UI_TRANSLATIONS.en;
   const [sosModalOpen, setSosModalOpen] = useState(false);
@@ -224,6 +234,188 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
     },
   ];
 
+  const renderDoctorAppointmentsCard = (variant: 'compact' | 'bento' | 'standard' | 'zen' | 'heritage' = 'compact') => {
+    if (variant === 'zen') {
+      if (!appointments || appointments.length === 0) return null;
+      const firstApt = appointments[0];
+      return (
+        <div className="p-4 rounded-2xl bg-amber-900/40 border border-amber-500/30 flex items-center justify-between text-left">
+          <div className="flex items-center gap-3">
+            <Stethoscope className="w-6 h-6 text-cyan-300 shrink-0" />
+            <div>
+              <h5 className="text-sm font-black text-white">{firstApt.doctor_name}</h5>
+              <span className="text-xs text-amber-200">{firstApt.specialty} · 📅 {firstApt.date} ⏰ {firstApt.time}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              soundEffects.playGentleChime(440);
+              speakText(`Doctor consultation scheduled with ${firstApt.doctor_name} on ${firstApt.date} at ${firstApt.time}`, language);
+            }}
+            className="p-2 rounded-xl bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 cursor-pointer"
+            title={t.listen_appointment || 'Listen to appointment details'}
+          >
+            <Volume2 className="w-4 h-4" />
+          </button>
+        </div>
+      );
+    }
+
+    if (variant === 'bento') {
+      return (
+        <div className="p-6 md:p-8 rounded-[32px] bg-[#FAFAFA] border-2 border-[#47D6B6] shadow-sm flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <Stethoscope className="w-5 h-5 text-cyan-600" />
+                <span>{t.doctor_consultations || 'Doctor Consultations & Visits'}</span>
+              </h3>
+              <span className="text-xs font-black bg-cyan-100 text-cyan-800 px-2 py-0.5 rounded-full border border-cyan-300">
+                {appointments.length} {t.scheduled_by_caregiver || 'Scheduled'}
+              </span>
+            </div>
+
+            <div className="space-y-2.5 pt-3">
+              {appointments.length === 0 ? (
+                <p className="text-xs text-slate-500 py-3 text-center font-medium">
+                  {t.no_appointments || 'No doctor visits scheduled right now. You are doing well!'}
+                </p>
+              ) : (
+                appointments.slice(0, 3).map((apt) => (
+                  <div
+                    key={apt.id}
+                    className="p-3 rounded-2xl bg-white border border-cyan-200 hover:border-cyan-400 flex items-center justify-between transition-all shadow-2xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs font-black text-slate-900 truncate">
+                          {apt.doctor_name}
+                        </h4>
+                        <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 shrink-0">
+                          {apt.status}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-cyan-700 font-bold truncate">
+                        {apt.specialty} • {apt.hospital}
+                      </p>
+                      <span className="text-[10px] text-slate-500 font-bold">📅 {apt.date} · ⏰ {apt.time}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => speakText(`Doctor consultation with ${apt.doctor_name} on ${apt.date} at ${apt.time} at ${apt.hospital}. Note: ${apt.notes}`, language)}
+                      className="p-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-700 border border-cyan-200 cursor-pointer shrink-0 ml-2"
+                      title={t.listen_appointment || 'Listen to appointment details'}
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {appointments.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const text = appointments.map(a => `${a.doctor_name} on ${a.date} at ${a.time}`).join('. ');
+                speakText(text, language);
+              }}
+              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-[#47D6B6] text-xs font-black text-[#1E293B] flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+            >
+              <Volume2 className="w-4 h-4 text-[#2794EB]" />
+              <span>{t.listen_appointment || 'Voice Readout Consultations'}</span>
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // Default compact & standard card layout
+    return (
+      <div className="p-5 md:p-6 rounded-3xl bg-white border-2 border-[#47D6B6] shadow-sm space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 shadow-2xs">
+              <Stethoscope className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-base sm:text-lg font-black text-slate-900">{t.doctor_consultations || 'Doctor Consultations & Visits'}</h4>
+              <p className="text-[11px] text-slate-500 font-bold">{t.scheduled_by_caregiver || 'Scheduled by your Caregiver'}</p>
+            </div>
+          </div>
+          {appointments.length > 0 && (
+            <button
+              onClick={() => {
+                const text = appointments.map(a => `Consultation with ${a.doctor_name}, ${a.specialty} at ${a.hospital} on ${a.date} at ${a.time}. Notes: ${a.notes}`).join('. ');
+                speakText(text, language);
+              }}
+              className="text-xs font-bold text-[#2794EB] hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <Volume2 className="w-3.5 h-3.5" /> Readout
+            </button>
+          )}
+        </div>
+
+        {appointments.length === 0 ? (
+          <div className="p-4 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center space-y-1">
+            <Stethoscope className="w-6 h-6 text-slate-400 mx-auto" />
+            <p className="text-xs text-slate-500 font-medium">
+              {t.no_appointments || 'No doctor visits scheduled right now. You are doing well!'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+            {appointments.map((apt) => (
+              <div
+                key={apt.id}
+                className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-cyan-50/70 to-blue-50/50 border border-cyan-200 hover:border-cyan-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-sm text-slate-900">{apt.doctor_name}</span>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
+                      {apt.specialty}
+                    </span>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ✓ {t.confirmed_status || 'Confirmed'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 font-medium flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{apt.hospital}</span>
+                  </p>
+                  {apt.notes && (
+                    <p className="text-[11px] text-slate-600 italic bg-white/80 p-1.5 rounded-lg border border-slate-200/60 mt-1">
+                      📝 {apt.notes}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <div className="text-right">
+                    <span className="text-xs font-black text-slate-800 block">📅 {apt.date}</span>
+                    <span className="text-xs font-bold text-cyan-700">⏰ {apt.time}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      speakText(`Doctor consultation with ${apt.doctor_name}, ${apt.specialty} at ${apt.hospital} scheduled for ${apt.date} at ${apt.time}. Notes: ${apt.notes}`, language);
+                    }}
+                    className="p-2.5 rounded-xl bg-white hover:bg-cyan-100 text-cyan-700 border border-cyan-300 cursor-pointer transition-colors shadow-2xs"
+                    title={t.listen_appointment || 'Listen to appointment details'}
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="w-full max-w-5xl mx-auto space-y-8 animate-fade-in pb-12">
       {/* Elderly Welcome Hero Card with Theme Gradient */}
@@ -311,7 +503,23 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
             </div>
 
             {/* Connected Caregiver Status / Action */}
-            <div className="pt-2">
+            <div className="pt-2 flex flex-wrap items-center gap-2">
+              {onOpenHindiWelcome && (
+                <button
+                  type="button"
+                  id="view-hindi-patient-card-btn"
+                  onClick={() => {
+                    soundEffects.playGentleTap();
+                    onOpenHindiWelcome();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-black shadow-2xs cursor-pointer transition-all active:scale-95"
+                  title="मरीज़ परिचय एवं अस्पताल विवरण कार्ड देखें"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  <span>नमस्ते कार्ड (हिंदी विवरण)</span>
+                </button>
+              )}
+
               {effectiveCaregiverCode ? (
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/95 text-[#2794EB] border border-[#47D6B6] text-xs font-black shadow-xs">
                   <ShieldCheck className="w-4 h-4 text-[#2794EB]" />
@@ -620,6 +828,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Doctor Appointments & Medical Consultations Card */}
+          {renderDoctorAppointmentsCard('compact')}
         </div>
       ) : layoutMode === 'zen' ? (
         /* ZEN SUNDOWNING CALM INTERFACE */
@@ -722,6 +933,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
                 </button>
               </div>
             )}
+
+            {/* Doctor Consultation in Zen */}
+            {renderDoctorAppointmentsCard('zen')}
 
             {/* Emergency Calm Pill */}
             <div className="pt-4 border-t border-amber-800/80 flex items-center justify-between text-xs text-amber-300">
@@ -888,6 +1102,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
                 Press for Immediate Help
               </span>
             </button>
+
+            {/* Bento Tile 6: Doctor Consultations */}
+            {renderDoctorAppointmentsCard('bento')}
           </div>
         </div>
       ) : layoutMode === 'compact' ? (
@@ -1033,6 +1250,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Doctor Appointments Card */}
+          {renderDoctorAppointmentsCard('compact')}
         </div>
       ) : layoutMode === 'heritage' ? (
         /* ASSAM HERITAGE & MUGA SILK LAYOUT */
@@ -1089,6 +1309,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Heritage Doctor Appointments */}
+          {renderDoctorAppointmentsCard('compact')}
 
           {/* Heritage Games Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -1288,6 +1511,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
               </div>
               <span className="text-xs bg-white/20 px-2 py-0.5 rounded">Emergency Call</span>
             </button>
+
+            {/* Split Console Doctor Appointments */}
+            {renderDoctorAppointmentsCard('compact')}
           </div>
         </div>
       ) : (
@@ -1546,6 +1772,9 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Standard Senior Tablet Doctor Consultations */}
+          {renderDoctorAppointmentsCard('standard')}
         </>
       )}
 
