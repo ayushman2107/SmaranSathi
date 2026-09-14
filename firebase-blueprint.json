@@ -41,12 +41,21 @@
       "collection": "journals",
       "fields": {
         "id": { "type": "string", "required": true },
+        "relationship_id": { "type": "string", "required": true },
+        "patient_id": { "type": "string", "required": true },
+        "caregiver_id": { "type": "string", "required": true },
+        "created_by": { "type": "string", "required": true },
+        "creator_role": { "type": "string", "required": true },
+        "created_by_name": { "type": "string", "required": false },
         "user_id": { "type": "string", "required": true },
         "title": { "type": "string", "required": true },
         "content": { "type": "string", "required": true },
-        "mood": { "type": "string", "required": true },
-        "recorded_at": { "type": "string", "required": true },
-        "language": { "type": "string", "required": true }
+        "media_type": { "type": "string", "required": true },
+        "media_url": { "type": "string", "required": false },
+        "audio_duration": { "type": "string", "required": false },
+        "location_tag": { "type": "string", "required": false },
+        "emotion": { "type": "string", "required": true },
+        "created_at": { "type": "string", "required": true }
       }
     },
     "FamilyMember": {

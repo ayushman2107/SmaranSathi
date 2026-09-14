@@ -312,11 +312,11 @@ export const ElderlyHome: React.FC<ElderlyHomeProps> = ({
 
             {/* Connected Caregiver Status / Action */}
             <div className="pt-2">
-              {user.connected_caregiver_id ? (
+              {effectiveCaregiverCode ? (
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/95 text-[#2794EB] border border-[#47D6B6] text-xs font-black shadow-xs">
                   <ShieldCheck className="w-4 h-4 text-[#2794EB]" />
                   <span>
-                    Caregiver: {user.connected_caregiver_name || user.connected_caregiver_id} ({user.connected_caregiver_id})
+                    Caregiver: {effectiveCaregiverName} ({effectiveCaregiverCode})
                   </span>
                   {onOpenConnectCaregiver && (
                     <button

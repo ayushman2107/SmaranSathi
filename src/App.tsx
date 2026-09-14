@@ -745,22 +745,36 @@ export default function App() {
   const isElderly = currentUser?.role === 'elderly';
   const assignedPatients = useMemo(() => {
     if (!currentUser || currentUser.role !== 'caregiver') return [];
-    return users.filter((u) => {
+    const cgCode = (currentUser.caregiver_code || '').trim().toUpperCase();
+    const cgId = currentUser.id.trim().toUpperCase();
+
+    const explicitlyAssigned = users.filter((u) => {
       if (u.role !== 'elderly') return false;
-      const cgCode = (currentUser.caregiver_code || '').trim().toUpperCase();
-      const cgId = currentUser.id.trim().toUpperCase();
       const conn = (u.connected_caregiver_id || '').trim().toUpperCase();
       if (conn && (conn === cgCode || conn === cgId)) return true;
       if (assignedPatientIds.has(u.id)) return true;
       return false;
     });
+
+    return explicitlyAssigned;
   }, [currentUser, users, assignedPatientIds]);
 
   const currentPatientUser: User | null = useMemo(() => {
     if (!currentUser) return null;
     if (isElderly) return currentUser;
-    return assignedPatients.find((u) => u.id === selectedPatientId) || assignedPatients[0] || null;
+    return assignedPatients.find((u) => u.id === selectedPatientId) || (assignedPatients.length > 0 ? assignedPatients[0] : null);
   }, [currentUser, isElderly, assignedPatients, selectedPatientId]);
+
+  // Auto-select active patient for caregiver if none selected or selected patient is not in list
+  useEffect(() => {
+    if (currentUser?.role === 'caregiver' && assignedPatients.length > 0) {
+      if (!selectedPatientId || !assignedPatients.some((p) => p.id === selectedPatientId)) {
+        const defaultPatientId = assignedPatients[0].id;
+        setSelectedPatientId(defaultPatientId);
+        loadPatientData(defaultPatientId);
+      }
+    }
+  }, [currentUser?.role, currentUser?.id, assignedPatients, selectedPatientId]);
 
   // Trigger SOS Alert (internal backend & state update)
   const handleTriggerSOS = async () => {
@@ -1350,12 +1364,22 @@ export default function App() {
       />
 
       {/* Memory Reminiscence Journal Modal */}
-      {currentPatientUser && (
+      {currentUser && (
         <MemoryJournalModal
           isOpen={isJournalOpen}
           onClose={() => setIsJournalOpen(false)}
-          userId={currentPatientUser.id}
-          patientName={currentPatientUser.name}
+          userId={currentPatientUser?.id || currentUser.id}
+          userName={currentUser.name}
+          patientName={currentPatientUser?.name || (currentUser.role === 'elderly' ? currentUser.name : undefined)}
+          currentLanguage={currentLanguage}
+          isElderlyMode={isElderly}
+          currentUser={currentUser}
+          patientUser={currentPatientUser || (currentUser.role === 'elderly' ? currentUser : undefined)}
+          assignedCaregiver={assignedCaregiverForElderly || undefined}
+          onConnectCaregiver={() => {
+            setIsJournalOpen(false);
+            setIsConnectCaregiverOpen(true);
+          }}
         />
       )}
 

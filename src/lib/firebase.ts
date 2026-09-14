@@ -71,13 +71,18 @@ export const db = (() => {
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    const snap = await getDoc(doc(db, 'test', 'connection'));
+    const snap = await getDocFromServer(doc(db, 'test', 'connection'));
     return snap.exists();
   } catch (error) {
-    // Graceful offline fallback
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn("Please check your Firebase configuration or network connectivity.");
+    }
     return false;
   }
 }
+
+// Perform initial connection test on boot
+testConnection().catch(() => {});
 
 // Error handling helper for Firebase operations
 export enum OperationType {
@@ -602,17 +607,50 @@ export async function deleteReminderFromFirebase(reminderId: string): Promise<vo
 }
 
 // =========================================================================
-// 3. Memory Journals (User-Specific)
+// 3. Memory Journals (Relationship-Specific to Assigned Patient-Caregiver Pair)
 // =========================================================================
 
+export async function getJournalsForRelationship(
+  relationshipId: string
+): Promise<MemoryJournalEntry[]> {
+  try {
+    if (!relationshipId) return [];
+    const q = query(
+      collection(db, JOURNALS_COLLECTION),
+      where('relationship_id', '==', relationshipId)
+    );
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => d.data() as MemoryJournalEntry)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  } catch (error) {
+    console.warn('Error getting journals for relationship from Firebase:', error);
+    return [];
+  }
+}
+
 export async function getJournalsForUser(userId: string): Promise<MemoryJournalEntry[]> {
+  // Maintained for backward compatibility, queries relationship or user
   try {
     const q = query(
       collection(db, JOURNALS_COLLECTION),
-      where('user_id', '==', userId)
+      where('patient_id', '==', userId)
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as MemoryJournalEntry);
+    if (!snap.empty) {
+      return snap.docs
+        .map((d) => d.data() as MemoryJournalEntry)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+    // Fallback for legacy items without patient_id
+    const legacyQ = query(
+      collection(db, JOURNALS_COLLECTION),
+      where('user_id', '==', userId)
+    );
+    const legacySnap = await getDocs(legacyQ);
+    return legacySnap.docs
+      .map((d) => d.data() as MemoryJournalEntry)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   } catch (error) {
     console.warn('Error getting journals from Firebase:', error);
     return [];
@@ -625,6 +663,15 @@ export async function saveJournalToFirebase(journal: MemoryJournalEntry): Promis
     await setDoc(ref, cleanForFirestore(journal), { merge: true });
   } catch (error) {
     console.error('Error saving journal to Firebase:', error);
+  }
+}
+
+export async function deleteJournalFromFirebase(journalId: string): Promise<void> {
+  try {
+    const ref = doc(db, JOURNALS_COLLECTION, journalId);
+    await deleteDoc(ref);
+  } catch (error) {
+    console.error('Error deleting journal from Firebase:', error);
   }
 }
 

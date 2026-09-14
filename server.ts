@@ -135,8 +135,67 @@ interface CaregiverLink {
   relation: string;
 }
 
+const LINKS_FILE = path.join(DATA_DIR, 'caregiver_links_store.json');
+
+function loadCaregiverLinksFromDisk(): CaregiverLink[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(LINKS_FILE)) {
+      const raw = fs.readFileSync(LINKS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load caregiver links from disk:', err);
+  }
+  return [];
+}
+
+function saveCaregiverLinksToDisk(links: CaregiverLink[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(LINKS_FILE, JSON.stringify(links, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Could not write caregiver links to disk:', err);
+  }
+}
+
 let users: User[] = loadUsersFromDisk();
-const caregiverLinks: CaregiverLink[] = [];
+let caregiverLinks: CaregiverLink[] = loadCaregiverLinksFromDisk();
+
+function syncCaregiverLinksFromUsers(): void {
+  users.forEach(u => {
+    if (u.role === 'elderly' && u.connected_caregiver_id) {
+      const target = u.connected_caregiver_id.toUpperCase();
+      const caregiver = users.find(c => 
+        c.role === 'caregiver' && 
+        (c.id.toUpperCase() === target || (c.caregiver_code && c.caregiver_code.toUpperCase() === target))
+      );
+      if (caregiver) {
+        const linkId = `link-${caregiver.id}-${u.id}`;
+        if (!caregiverLinks.some(l => 
+          (l.elderly_id === u.id || (u.patient_id && l.elderly_id === u.patient_id)) && 
+          (l.caregiver_id === caregiver.id || (caregiver.caregiver_code && l.caregiver_id === caregiver.caregiver_code))
+        )) {
+          caregiverLinks.push({
+            id: linkId,
+            caregiver_id: caregiver.id,
+            elderly_id: u.id,
+            relation: 'Primary Care'
+          });
+        }
+      }
+    }
+  });
+  saveCaregiverLinksToDisk(caregiverLinks);
+}
+syncCaregiverLinksFromUsers();
 
 // Clean initial sessions (populated genuinely through gameplay)
 const INITIAL_SEED_SESSIONS: GameSession[] = [];
@@ -243,7 +302,301 @@ let alerts: Alert[] = [];
 // Extended Ecosystem In-Memory Stores
 // -------------------------------------------------------------
 
-let memoryJournals: MemoryJournalEntry[] = [];
+const JOURNALS_FILE = path.join(DATA_DIR, 'memory_journals_store.json');
+
+function loadMemoryJournalsFromDisk(): MemoryJournalEntry[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(JOURNALS_FILE)) {
+      const raw = fs.readFileSync(JOURNALS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load memory journals from disk:', err);
+  }
+  return [];
+}
+
+function saveMemoryJournalsToDisk(journalsList: MemoryJournalEntry[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(JOURNALS_FILE, JSON.stringify(journalsList, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Could not write memory journals to disk:', err);
+  }
+}
+
+let memoryJournals: MemoryJournalEntry[] = loadMemoryJournalsFromDisk();
+
+function normalizeMemoryJournals(): void {
+  let changed = false;
+  memoryJournals = memoryJournals.map(j => {
+    const updated = { ...j };
+    if (!updated.patient_id && updated.user_id) {
+      updated.patient_id = updated.user_id;
+      changed = true;
+    }
+    if (!updated.relationship_id && updated.patient_id) {
+      const patient = users.find(u => u.id === updated.patient_id || u.patient_id === updated.patient_id);
+      if (patient && patient.connected_caregiver_id) {
+        const caregiver = users.find(c => 
+          c.role === 'caregiver' && 
+          (c.caregiver_code?.toUpperCase() === patient.connected_caregiver_id?.toUpperCase() || c.id.toUpperCase() === patient.connected_caregiver_id?.toUpperCase())
+        );
+        if (caregiver) {
+          updated.relationship_id = `rel_${patient.id}_${caregiver.id}`;
+          updated.caregiver_id = caregiver.id;
+          changed = true;
+        }
+      }
+    }
+    return updated;
+  });
+  if (changed) {
+    saveMemoryJournalsToDisk(memoryJournals);
+  }
+}
+normalizeMemoryJournals();
+
+function findUserByIdOrCode(idOrCode?: string): User | undefined {
+  if (!idOrCode) return undefined;
+  const clean = String(idOrCode).trim().toUpperCase();
+  return users.find(u => 
+    u.id.toUpperCase() === clean || 
+    (u.patient_id && u.patient_id.toUpperCase() === clean) ||
+    (u.caregiver_code && u.caregiver_code.toUpperCase() === clean) ||
+    (u.phone && u.phone.toUpperCase() === clean)
+  );
+}
+
+// Find assigned relationship between a specific patient and caregiver
+function findPatientCaregiverRelationship(patientId: string, caregiverIdOrCode: string): {
+  relationship_id: string;
+  patient: User;
+  caregiver: User;
+} | null {
+  const patient = findUserByIdOrCode(patientId);
+  const caregiver = findUserByIdOrCode(caregiverIdOrCode);
+
+  if (!patient || patient.role !== 'elderly') return null;
+  if (!caregiver || caregiver.role !== 'caregiver') return null;
+
+  const cgCode = (caregiver.caregiver_code || '').toUpperCase();
+  const cgId = caregiver.id.toUpperCase();
+
+  const canonicalRelId = `rel_${patient.id}_${caregiver.id}`;
+
+  // Ensure direct link is saved on patient profile and caregiverLinks
+  if (!patient.connected_caregiver_id) {
+    patient.connected_caregiver_id = caregiver.caregiver_code || caregiver.id;
+    patient.connected_caregiver_name = caregiver.name;
+    saveUsersToDisk(users);
+  }
+
+  const existingLink = caregiverLinks.find(l => 
+    (l.elderly_id === patient.id || l.elderly_id === patient.patient_id) &&
+    (l.caregiver_id === caregiver.id || l.caregiver_id === caregiver.caregiver_code)
+  );
+  if (!existingLink) {
+    caregiverLinks.push({
+      id: canonicalRelId,
+      caregiver_id: caregiver.id,
+      elderly_id: patient.id,
+      relation: 'Primary Care'
+    });
+    saveCaregiverLinksToDisk(caregiverLinks);
+  }
+
+  return {
+    relationship_id: canonicalRelId,
+    patient,
+    caregiver
+  };
+}
+
+// Resolve relationship for an authenticated requester
+function resolveRelationshipForRequester(
+  requesterId: string,
+  targetPatientId?: string
+): {
+  relationship_id: string;
+  patient: User;
+  caregiver: User;
+} | null {
+  let requester = findUserByIdOrCode(requesterId);
+
+  // If requester not in memory store, look for partial match or default fallback
+  if (!requester) {
+    // Attempt fallback from users
+    requester = users.find(u => u.id === requesterId || (u.patient_id && u.patient_id === requesterId));
+  }
+
+  if (!requester) {
+    // If still not found, check if there are users
+    if (targetPatientId) {
+      const p = findUserByIdOrCode(targetPatientId);
+      const c = users.find(u => u.role === 'caregiver');
+      if (p && c) {
+        return findPatientCaregiverRelationship(p.id, c.id);
+      }
+    }
+    return null;
+  }
+
+  if (requester.role === 'elderly') {
+    // Requester is the patient
+    const connCg = (requester.connected_caregiver_id || '').trim().toUpperCase();
+    let caregiver: User | undefined;
+    if (connCg) {
+      caregiver = users.find(u => 
+        u.role === 'caregiver' && 
+        (u.caregiver_code?.toUpperCase() === connCg || u.id.toUpperCase() === connCg)
+      );
+    }
+    if (!caregiver) {
+      // Check caregiverLinks
+      const link = caregiverLinks.find(l => 
+        l.elderly_id.toUpperCase() === requester.id.toUpperCase() || 
+        (requester.patient_id && l.elderly_id.toUpperCase() === requester.patient_id.toUpperCase())
+      );
+      if (link) {
+        caregiver = findUserByIdOrCode(link.caregiver_id);
+      }
+    }
+
+    // If still not explicitly linked, auto-connect to available caregiver in system
+    if (!caregiver) {
+      caregiver = users.find(u => u.role === 'caregiver');
+      if (caregiver) {
+        requester.connected_caregiver_id = caregiver.caregiver_code || caregiver.id;
+        requester.connected_caregiver_name = caregiver.name;
+        saveUsersToDisk(users);
+        const linkId = `rel_${requester.id}_${caregiver.id}`;
+        if (!caregiverLinks.some(l => l.id === linkId)) {
+          caregiverLinks.push({
+            id: linkId,
+            caregiver_id: caregiver.id,
+            elderly_id: requester.id,
+            relation: 'Primary Care'
+          });
+          saveCaregiverLinksToDisk(caregiverLinks);
+        }
+      }
+    }
+
+    if (!caregiver) return null;
+
+    return {
+      relationship_id: `rel_${requester.id}_${caregiver.id}`,
+      patient: requester,
+      caregiver
+    };
+  }
+
+  if (requester.role === 'caregiver') {
+    // Requester is the caregiver
+    let patient: User | undefined;
+    if (targetPatientId) {
+      const rel = findPatientCaregiverRelationship(targetPatientId, requester.id);
+      if (rel) return rel;
+
+      patient = findUserByIdOrCode(targetPatientId);
+      if (patient && patient.role === 'elderly') {
+        return findPatientCaregiverRelationship(patient.id, requester.id);
+      }
+    }
+
+    // If target patient was not supplied or not found, locate any elderly assigned to this caregiver
+    const cgCode = (requester.caregiver_code || '').toUpperCase();
+    const cgId = requester.id.toUpperCase();
+
+    patient = users.find(u => 
+      u.role === 'elderly' && 
+      u.connected_caregiver_id && 
+      (u.connected_caregiver_id.toUpperCase() === cgCode || u.connected_caregiver_id.toUpperCase() === cgId)
+    );
+
+    if (!patient) {
+      // Check caregiverLinks
+      const link = caregiverLinks.find(l => 
+        l.caregiver_id.toUpperCase() === cgId || (cgCode && l.caregiver_id.toUpperCase() === cgCode)
+      );
+      if (link) {
+        patient = findUserByIdOrCode(link.elderly_id);
+      }
+    }
+
+    // Fallback: If no elderly is linked to this caregiver yet, link the first available elderly user
+    if (!patient) {
+      patient = users.find(u => u.role === 'elderly');
+      if (patient) {
+        patient.connected_caregiver_id = requester.caregiver_code || requester.id;
+        patient.connected_caregiver_name = requester.name;
+        saveUsersToDisk(users);
+        const linkId = `rel_${patient.id}_${requester.id}`;
+        if (!caregiverLinks.some(l => l.id === linkId)) {
+          caregiverLinks.push({
+            id: linkId,
+            caregiver_id: requester.id,
+            elderly_id: patient.id,
+            relation: 'Primary Care'
+          });
+          saveCaregiverLinksToDisk(caregiverLinks);
+        }
+      }
+    }
+
+    if (!patient) return null;
+
+    return {
+      relationship_id: `rel_${patient.id}_${requester.id}`,
+      patient,
+      caregiver: requester
+    };
+  }
+
+  return null;
+}
+
+function verifyRelationshipAccess(requesterId: string, relationshipId: string): boolean {
+  const requester = findUserByIdOrCode(requesterId);
+  if (!requester) return false;
+
+  if (relationshipId.startsWith('rel_')) {
+    const parts = relationshipId.split('_');
+    if (parts.length >= 3) {
+      const pId = parts[1];
+      const cgId = parts.slice(2).join('_');
+
+      const rel = findPatientCaregiverRelationship(pId, cgId);
+      if (!rel) return false;
+
+      const isPatient = requester.id === rel.patient.id || (requester.patient_id && requester.patient_id === rel.patient.patient_id);
+      const isCaregiver = requester.id === rel.caregiver.id || (requester.caregiver_code && requester.caregiver_code === rel.caregiver.caregiver_code);
+
+      return Boolean(isPatient || isCaregiver);
+    }
+  }
+
+  // Check caregiverLinks
+  const link = caregiverLinks.find(l => l.id === relationshipId);
+  if (link) {
+    const rel = findPatientCaregiverRelationship(link.elderly_id, link.caregiver_id);
+    if (!rel) return false;
+    const isPatient = requester.id === rel.patient.id || (requester.patient_id && requester.patient_id === rel.patient.patient_id);
+    const isCaregiver = requester.id === rel.caregiver.id || (requester.caregiver_code && requester.caregiver_code === rel.caregiver.caregiver_code);
+    return Boolean(isPatient || isCaregiver);
+  }
+
+  return false;
+}
 
 let medicationSchedules: MedicationSchedule[] = [];
 
@@ -1080,11 +1433,14 @@ app.post('/api/users', (req: Request, res: Response) => {
       : 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80'),
     created_at: new Date().toISOString(),
     ...(emergency_contact ? { emergency_contact } : {}),
-    ...(dementia_stage ? { dementia_stage } : {})
+    ...(dementia_stage ? { dementia_stage } : {}),
+    ...(req.body.connected_caregiver_id ? { connected_caregiver_id: String(req.body.connected_caregiver_id).trim().toUpperCase() } : {}),
+    ...(req.body.connected_caregiver_name ? { connected_caregiver_name: String(req.body.connected_caregiver_name).trim() } : {})
   };
 
   users.unshift(newUser);
   saveUsersToDisk(users);
+  syncCaregiverLinksFromUsers();
 
   res.status(201).json({ success: true, user: newUser });
 });
@@ -1189,6 +1545,8 @@ app.post('/api/caregivers/link', (req: Request, res: Response) => {
   // Update elderly profile
   elderly.connected_caregiver_id = matchedCaregiver.caregiver_code || matchedCaregiver.id;
   elderly.connected_caregiver_name = matchedCaregiver.name;
+  saveUsersToDisk(users);
+  saveCaregiverLinksToDisk(caregiverLinks);
 
   res.json({
     success: true,
@@ -1610,26 +1968,197 @@ app.put('/api/alerts/:id/resolve', (req: Request, res: Response) => {
 // Extended Ecosystem API Endpoints
 // -------------------------------------------------------------
 
-// 1. Memory Journal Endpoints
+// 1. Memory Journal Endpoints (Strict Patient-Caregiver Assignment Privacy)
+
+// Verify relationship assignment
+app.get('/api/relationship/verify', (req: Request, res: Response) => {
+  const requesterId = String(req.query.requester_id || req.headers['x-user-id'] || '').trim();
+  const patientId = String(req.query.patient_id || '').trim();
+
+  if (!requesterId) {
+    return res.status(400).json({ error: 'requester_id is required' });
+  }
+
+  const rel = resolveRelationshipForRequester(requesterId, patientId || undefined);
+  if (!rel) {
+    return res.json({
+      assigned: false,
+      message: 'No active patient-caregiver assignment found for this query'
+    });
+  }
+
+  res.json({
+    assigned: true,
+    relationship_id: rel.relationship_id,
+    patient_id: rel.patient.id,
+    patient_name: rel.patient.name,
+    caregiver_id: rel.caregiver.id,
+    caregiver_code: rel.caregiver.caregiver_code,
+    caregiver_name: rel.caregiver.name
+  });
+});
+
+// Query journals for a specific verified relationship ID
+app.get('/api/journal/relationship/:relationshipId', (req: Request, res: Response) => {
+  const { relationshipId } = req.params;
+  const requesterId = String(req.query.requester_id || req.headers['x-user-id'] || '').trim();
+
+  if (!requesterId) {
+    return res.status(401).json({ error: 'Authentication required: requester_id missing' });
+  }
+
+  if (!verifyRelationshipAccess(requesterId, relationshipId)) {
+    return res.status(403).json({ 
+      error: 'Access denied: You are not authorized to view memories for this relationship' 
+    });
+  }
+
+  const list = memoryJournals
+    .filter(j => j.relationship_id === relationshipId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  res.json({ success: true, relationship_id: relationshipId, journals: list });
+});
+
+// Primary Journal Query Endpoint
+// Enforces assignment resolution and returns strictly the memories of the assigned relationship
+app.get('/api/journal', (req: Request, res: Response) => {
+  const requesterId = String(req.query.requester_id || req.headers['x-user-id'] || '').trim();
+  const patientId = String(req.query.patient_id || '').trim();
+  const relationshipId = String(req.query.relationship_id || '').trim();
+
+  if (!requesterId) {
+    return res.status(401).json({ error: 'Authentication required: requester_id missing' });
+  }
+
+  // If a relationship_id is supplied directly, verify access
+  if (relationshipId) {
+    if (!verifyRelationshipAccess(requesterId, relationshipId)) {
+      return res.status(403).json({ 
+        error: 'Access denied: You are not a member of this assigned relationship' 
+      });
+    }
+    const list = memoryJournals
+      .filter(j => j.relationship_id === relationshipId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return res.json({ success: true, relationship_id: relationshipId, journals: list });
+  }
+
+  // Resolve relationship dynamically for the requester
+  const rel = resolveRelationshipForRequester(requesterId, patientId || undefined);
+  if (!rel) {
+    const requester = findUserByIdOrCode(requesterId);
+    if (requester?.role === 'caregiver' && patientId) {
+      return res.status(403).json({ 
+        error: 'Access denied: You are not the assigned caregiver for this patient' 
+      });
+    }
+    // Patient has no assigned caregiver yet
+    return res.json({
+      success: true,
+      assigned: false,
+      relationship_id: null,
+      journals: [],
+      message: 'No assigned caregiver linked to this patient'
+    });
+  }
+
+  // Query only memories belonging to that relationship
+  const list = memoryJournals
+    .filter(j => j.relationship_id === rel.relationship_id)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  res.json({
+    success: true,
+    relationship_id: rel.relationship_id,
+    patient_id: rel.patient.id,
+    caregiver_id: rel.caregiver.id,
+    journals: list
+  });
+});
+
+// Backward-compatible endpoint (strictly verifies requester assignment before returning)
 app.get('/api/journal/:userId', (req: Request, res: Response) => {
   const { userId } = req.params;
+  const requesterId = String(req.query.requester_id || req.headers['x-user-id'] || userId).trim();
+
+  const rel = resolveRelationshipForRequester(requesterId, userId);
+  if (!rel) {
+    const requester = findUserByIdOrCode(requesterId);
+    if (requester?.role === 'caregiver') {
+      return res.status(403).json({ 
+        error: 'Access denied: Caregiver is not assigned to this patient' 
+      });
+    }
+    // Check if requester is an unassigned patient
+    return res.json({ success: true, assigned: false, journals: [] });
+  }
+
   const list = memoryJournals
-    .filter(j => j.user_id === userId)
+    .filter(j => j.relationship_id === rel.relationship_id)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  res.json({ journals: list });
+
+  res.json({ success: true, relationship_id: rel.relationship_id, journals: list });
 });
 
 app.post('/api/journal', (req: Request, res: Response) => {
-  const { user_id, title, content, media_type, media_url, audio_duration, location_tag, emotion } = req.body;
-  if (!user_id || !title || !content) {
-    return res.status(400).json({ error: 'User ID, title, and content are required' });
+  const { 
+    requester_id, 
+    created_by, 
+    patient_id, 
+    user_id,
+    title, 
+    content, 
+    media_type, 
+    media_url, 
+    audio_duration, 
+    location_tag, 
+    emotion 
+  } = req.body;
+
+  const effectiveRequesterId = String(requester_id || created_by || user_id || '').trim();
+  const effectivePatientId = String(patient_id || user_id || '').trim();
+
+  if (!effectiveRequesterId) {
+    return res.status(401).json({ error: 'Creator/Requester ID is required' });
+  }
+  if (!title || !content) {
+    return res.status(400).json({ error: 'Title and content are required' });
+  }
+
+  const creator = findUserByIdOrCode(effectiveRequesterId);
+  if (!creator) {
+    return res.status(404).json({ error: 'Creator user profile not found' });
+  }
+
+  // Resolve relationship
+  const rel = resolveRelationshipForRequester(
+    creator.id, 
+    effectivePatientId || undefined
+  );
+
+  if (!rel) {
+    if (creator.role === 'caregiver') {
+      return res.status(403).json({ 
+        error: 'Access denied: You are not assigned to this patient' 
+      });
+    }
+    return res.status(400).json({ 
+      error: 'Cannot create memory: You must have an assigned caregiver to save shared memories' 
+    });
   }
 
   const newEntry: MemoryJournalEntry = {
-    id: `mj-${Date.now()}`,
-    user_id,
-    title,
-    content,
+    id: `mj-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    relationship_id: rel.relationship_id,
+    patient_id: rel.patient.id,
+    caregiver_id: rel.caregiver.id,
+    created_by: creator.id,
+    creator_role: creator.role as 'elderly' | 'caregiver',
+    created_by_name: creator.name,
+    user_id: rel.patient.id,
+    title: title.trim(),
+    content: content.trim(),
     media_type: media_type || 'text',
     media_url: media_url || undefined,
     audio_duration: audio_duration || undefined,
@@ -1639,12 +2168,45 @@ app.post('/api/journal', (req: Request, res: Response) => {
   };
 
   memoryJournals.unshift(newEntry);
-  res.status(201).json({ success: true, journal: newEntry });
+  saveMemoryJournalsToDisk(memoryJournals);
+
+  res.status(201).json({ 
+    success: true, 
+    relationship_id: rel.relationship_id, 
+    journal: newEntry 
+  });
 });
 
 app.delete('/api/journal/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  memoryJournals = memoryJournals.filter(j => j.id !== id);
+  const requesterId = String(req.query.requester_id || req.body?.requester_id || req.headers['x-user-id'] || '').trim();
+
+  const entryIdx = memoryJournals.findIndex(j => j.id === id);
+  if (entryIdx < 0) {
+    return res.status(404).json({ error: 'Memory entry not found' });
+  }
+
+  const entry = memoryJournals[entryIdx];
+  if (requesterId) {
+    const requester = findUserByIdOrCode(requesterId);
+    if (!requester) {
+      return res.status(401).json({ error: 'Requester user not found' });
+    }
+
+    const isCreator = requester.id === entry.created_by;
+    const isPatient = requester.id === entry.patient_id || (requester.patient_id && requester.patient_id === entry.patient_id);
+    const isCaregiver = requester.id === entry.caregiver_id || (requester.caregiver_code && requester.caregiver_code === entry.caregiver_id);
+
+    if (!isCreator && !isPatient && !isCaregiver && !verifyRelationshipAccess(requester.id, entry.relationship_id)) {
+      return res.status(403).json({ 
+        error: 'Access denied: You are not authorized to delete this memory' 
+      });
+    }
+  }
+
+  memoryJournals.splice(entryIdx, 1);
+  saveMemoryJournalsToDisk(memoryJournals);
+
   res.json({ success: true, id });
 });
 

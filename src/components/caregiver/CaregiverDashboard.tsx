@@ -861,7 +861,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                       </span>
                     </div>
                     <p className="text-xs text-slate-600 font-bold">
-                      Clinical AI analysis based on {currentPatient.name.split(' ')[0]}'s empirical accuracy, speed, and cognitive domain fatigue
+                      Clinical AI analysis based on {currentPatient?.name.split(' ')[0] || 'Patient'}'s empirical accuracy, speed, and cognitive domain fatigue
                     </p>
                   </div>
                 </div>
@@ -961,7 +961,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                         {t.patient_game_analytics}
                       </span>
                       <span className="text-xs font-bold text-slate-500">
-                        {currentPatient.name} • {analysis.total_games_played} {t.sessions_evaluated}
+                        {currentPatient?.name || 'Patient'} • {analysis.total_games_played} {t.sessions_evaluated}
                       </span>
                     </div>
                     <h3 className="text-2xl font-black text-[#1E293B]">
@@ -1235,7 +1235,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                         {t.game_accuracy_trend}
                       </h3>
                       <p className="text-slate-500 text-xs font-medium">
-                        Session-by-session accuracy compared against {currentPatient.name.split(' ')[0]}'s empirical baseline ({analysis.average_accuracy_pct}%)
+                        Session-by-session accuracy compared against {currentPatient?.name.split(' ')[0] || 'Patient'}'s empirical baseline ({analysis.average_accuracy_pct}%)
                       </p>
                     </div>
                     <div className="flex items-center gap-4 text-xs font-bold">
@@ -1328,7 +1328,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                         {t.cognitive_participation}
                       </h3>
                       <p className="text-slate-500 text-xs font-medium">
-                        Distribution of cultural game activities completed by {currentPatient.name.split(' ')[0]}
+                        Distribution of cultural game activities completed by {currentPatient?.name.split(' ')[0] || 'Patient'}
                       </p>
                     </div>
 
@@ -1432,7 +1432,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                   {t.no_sessions_desc}
                 </p>
                 <p className="text-xs text-slate-500 italic">
-                  Once {currentPatient.name.split(' ')[0]} completes a game activity (e.g. Memory Match, Picture Recognition, or Sequence Recall), live accuracy trajectories, domain breakdowns, and clinical cognitive observations will generate automatically.
+                  Once {currentPatient?.name.split(' ')[0] || 'the patient'} completes a game activity (e.g. Memory Match, Picture Recognition, or Sequence Recall), live accuracy trajectories, domain breakdowns, and clinical cognitive observations will generate automatically.
                 </p>
               </div>
             </div>

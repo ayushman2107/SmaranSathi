@@ -314,7 +314,13 @@ export interface CulturalItem {
 
 export interface MemoryJournalEntry {
   id: string;
-  user_id: string;
+  relationship_id: string; // Canonical assignment/relationship ID
+  patient_id: string;      // ID of the patient
+  caregiver_id: string;    // ID / Code of the assigned caregiver
+  created_by: string;      // User ID who created the memory
+  creator_role: 'elderly' | 'caregiver'; // Role of the creator
+  created_by_name?: string;// Display name of creator
+  user_id: string;         // Kept for backward compatibility (= patient_id)
   title: string;
   content: string;
   media_type: 'text' | 'audio' | 'photo' | 'video';

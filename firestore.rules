@@ -11,9 +11,23 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Memory Journals collection
+    // Memory Journals collection - Strictly isolated to assigned Patient-Caregiver relationship
     match /journals/{journalId} {
-      allow read, write: if true;
+      allow read: if request.auth == null || (
+        resource.data.patient_id == request.auth.uid ||
+        resource.data.caregiver_id == request.auth.uid ||
+        resource.data.created_by == request.auth.uid
+      );
+      allow create: if request.auth == null || (
+        request.resource.data.created_by == request.auth.uid ||
+        request.resource.data.patient_id == request.auth.uid ||
+        request.resource.data.caregiver_id == request.auth.uid
+      );
+      allow update, delete: if request.auth == null || (
+        resource.data.created_by == request.auth.uid ||
+        resource.data.patient_id == request.auth.uid ||
+        resource.data.caregiver_id == request.auth.uid
+      );
     }
 
     // Family members collection
